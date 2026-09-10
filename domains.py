@@ -1,0 +1,877 @@
+# domains.py
+
+import math
+from dataclasses import dataclass
+import numpy as np
+import logging
+
+from PySide6.QtCore import Qt, QPointF, Signal, QRectF
+from PySide6.QtGui import QColor, QPainter, QPen, QBrush, QPolygonF, QFont, QPainterPath, QPainterPathStroker
+from PySide6.QtWidgets import (QVBoxLayout, QTableWidget, QTableWidgetItem, QLabel, 
+    QGraphicsTextItem, QGraphicsObject, QGraphicsItem, QDialog, QDialogButtonBox, QCheckBox, 
+    QTreeWidget, QHeaderView, QHBoxLayout, QPushButton, QTreeWidgetItem, QWidget, QMessageBox)
+
+@dataclass
+class Vec3:
+    x: float
+    y: float
+    z: float
+
+
+class Camera3D:
+    def __init__(self):
+        self.yaw = math.radians(-55)
+        self.pitch = math.radians(30)
+        self.zoom = 1.0
+
+    def rotate(self, dx, dy):
+        self.yaw += math.radians(dx * 0.5)
+        self.pitch += math.radians(dy * 0.5)
+        self.pitch = max(math.radians(-89), min(math.radians(89), self.pitch))
+
+    def project(self, p: Vec3):
+        cy, sy = math.cos(self.yaw), math.sin(self.yaw)
+        x1 = p.x * sy + p.y * cy
+        y1 = -p.x * cy + p.y * sy
+
+        cp, sp = math.cos(self.pitch), math.sin(self.pitch)
+        x2 = -x1
+        y2 = p.z * cp - y1 * sp
+        z2 = p.z * sp + y1 * cp
+        return x2, y2, z2
+
+
+class ClickableGraphicsItem(QGraphicsObject):
+    """Temel tıklanabilir grafik öğesi - QGraphicsObject tabanlı"""
+    clicked = Signal(object)
+    context_menu_requested = Signal(object)
+    visibility_changed = Signal(object, bool)
+    
+    def __init__(self, name, parent=None):
+        super().__init__(parent)
+        self.name = name
+        self._is_deleted = False
+        self._is_visible = True
+        
+        self.setAcceptHoverEvents(True)
+        self.setFlag(QGraphicsItem.ItemIsSelectable, True)
+        self.setVisible(True)
+
+    def set_visible(self, visible):
+        """Görünürlüğü ayarla"""
+        if self._is_visible != visible:
+            self._is_visible = visible
+            self.setVisible(visible)
+            self.visibility_changed.emit(self.name, visible)
+            
+    def is_visible(self):
+        """Görünürlük durumunu döndür"""
+        return self._is_visible
+        
+    def toggle_visibility(self):
+        """Görünürlüğü değiştir"""
+        self.set_visible(not self._is_visible)
+        
+    def boundingRect(self):
+        return QRectF(-10, -10, 20, 20)
+    
+    def paint(self, painter, option, widget):
+        pass
+        
+    def mousePressEvent(self, event):
+        if event.button() == Qt.MouseButton.LeftButton:
+            self.clicked.emit(self.name)
+        elif event.button() == Qt.MouseButton.RightButton:
+            self.context_menu_requested.emit(self.name)
+        super().mousePressEvent(event)
+
+    def safe_ungrab(self):
+        """Güvenli ungrabMouse"""
+        if not self._is_deleted and self.scene() and self.scene().views():
+            try:
+                if self.grabber():
+                    self.ungrabMouse()
+            except RuntimeError:
+                pass
+    
+    def safe_remove(self):
+        """Güvenli şekilde sahneden kaldır"""
+        if not self._is_deleted:
+            self._is_deleted = True
+            self.safe_ungrab()
+            if self.scene():
+                self.scene().removeItem(self)
+
+
+# domains.py - AxisItem (Çok basit versiyon)
+
+class AxisItem(QGraphicsObject):
+    """3D eksenleri gösteren grafik öğesi - Sabit boyut, 3D rotasyonlu"""
+    
+    def __init__(self, view3d, length=60, parent=None):
+        super().__init__(parent)
+        self.view3d = view3d
+        self._length = length  # Sabit piksel uzunluğu
+        self.setZValue(9999)
+        self.setAcceptHoverEvents(False)
+        self.setFlag(QGraphicsItem.ItemIsSelectable, False)
+        self.setFlag(QGraphicsItem.ItemIsMovable, False)
+        
+    def boundingRect(self):
+        r = self._length * 1.5
+        return QRectF(-r, -r, r * 2, r * 2)
+    
+    def paint(self, painter, option, widget=None):
+        if not self.view3d:
+            return
+        
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        
+        # Sabit uzunluk
+        l = self._length
+        
+        # 3D noktaları projekte et (zoom'suz)
+        origin = self._project(Vec3(0, 0, 0))
+        x_end = self._project(Vec3(1, 0, 0))
+        y_end = self._project(Vec3(0, 1, 0))
+        z_end = self._project(Vec3(0, 0, 1))
+        
+        # Vektörleri normalize et ve l uzunluğuna ölçekle
+        def scale_vector(vec):
+            dx = vec.x() - origin.x()
+            dy = vec.y() - origin.y()
+            length = (dx * dx + dy * dy) ** 0.5
+            if length < 0.001:
+                return origin
+            scale = l / length
+            return QPointF(origin.x() + dx * scale, origin.y() + dy * scale)
+        
+        x_tip = scale_vector(x_end)
+        y_tip = scale_vector(y_end)
+        z_tip = scale_vector(z_end)
+        
+        # X ekseni - Kırmızı
+        painter.setPen(QPen(QColor("#ff1744"), 2.5))
+        painter.drawLine(origin, x_tip)
+        self._draw_arrow(painter, origin, x_tip, QColor("#ff1744"))
+        painter.drawText(x_tip + QPointF(8, -8), "X")
+        
+        # Y ekseni - Yeşil
+        painter.setPen(QPen(QColor("#00e676"), 2.5))
+        painter.drawLine(origin, y_tip)
+        self._draw_arrow(painter, origin, y_tip, QColor("#00e676"))
+        painter.drawText(y_tip + QPointF(-15, -8), "Y")
+        
+        # Z ekseni - Cyan
+        painter.setPen(QPen(QColor("#00e5ff"), 2.5))
+        painter.drawLine(origin, z_tip)
+        self._draw_arrow(painter, origin, z_tip, QColor("#00e5ff"))
+        painter.drawText(z_tip + QPointF(8, 8), "Z")
+        
+        # Orijin
+        painter.setBrush(QBrush(QColor("#ffffff")))
+        painter.setPen(QPen(QColor("#666666"), 1.5))
+        painter.drawEllipse(origin, 4, 4)
+        painter.drawText(origin + QPointF(-15, 15), "O")
+    
+    def _project(self, p3d: Vec3):
+        """3D noktayı zoom'suz projekte et"""
+        if not self.view3d:
+            return QPointF(0, 0)
+        x, y, _ = self.view3d.camera.project(p3d)
+        # Zoom faktörünü 1.0 al
+        scale = 40 * 1.0
+        return QPointF(x * scale + self.view3d.center_x, 
+                      -y * scale + self.view3d.center_y)
+    
+    def _draw_arrow(self, painter, origin, tip, color):
+        """Ok başı çizer"""
+        try:
+            size = 10
+            dx = tip.x() - origin.x()
+            dy = tip.y() - origin.y()
+            length = (dx * dx + dy * dy) ** 0.5
+            
+            if length < 0.01:
+                return
+                
+            dx /= length
+            dy /= length
+            
+            nx = -dy
+            ny = dx
+            
+            p1 = QPointF(tip.x() - size * dx + size * 0.4 * nx,
+                         tip.y() - size * dy + size * 0.4 * ny)
+            p2 = QPointF(tip.x() - size * dx - size * 0.4 * nx,
+                         tip.y() - size * dy - size * 0.4 * ny)
+            
+            painter.setBrush(color)
+            painter.setPen(QPen(color, 1))
+            path = QPainterPath()
+            path.moveTo(tip)
+            path.lineTo(p1)
+            path.lineTo(p2)
+            path.closeSubpath()
+            painter.drawPath(path)
+        except:
+            pass
+
+class PointItem(ClickableGraphicsItem):
+    def __init__(self, name, radius=6, parent=None):
+        super().__init__(name, parent)
+        self.radius = radius
+        self._is_selected = False
+        self._is_hovered = False
+
+        self.setZValue(200)
+
+        self.label = QGraphicsTextItem(name, self)
+        self.label.setDefaultTextColor(QColor("#222222"))
+        self.label.setFont(QFont("Arial", 8, QFont.Weight.Bold))
+        self.label.setPos(radius + 3, -radius - 3)
+
+    def set_selected_state(self, selected: bool):
+        self._is_selected = selected
+        self.update()
+
+    def hoverEnterEvent(self, event):
+        self._is_hovered = True
+        self.update()
+        super().hoverEnterEvent(event)
+
+    def hoverLeaveEvent(self, event):
+        self._is_hovered = False
+        self.update()
+        super().hoverLeaveEvent(event)
+
+    def boundingRect(self):
+        r = self.radius + 6
+        return QRectF(-r, -r, r * 2, r * 2)
+
+    def paint(self, painter, option, widget=None):
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        
+        if self._is_selected:
+            brush_color = QColor("#e91e63")
+            pen_color = QColor("#880e4f")
+        elif self._is_hovered:
+            brush_color = QColor("#00bcd4")
+            pen_color = QColor("#006064")
+        else:
+            brush_color = QColor("#2196f3")
+            pen_color = QColor("#0d47a1")
+
+        painter.setBrush(QBrush(brush_color))
+        painter.setPen(QPen(pen_color, 3 if (self._is_selected or self._is_hovered) else 2))
+        painter.drawEllipse(QRectF(-self.radius, -self.radius, self.radius * 2, self.radius * 2))
+
+
+
+
+class EdgeItem(ClickableGraphicsItem):
+    clicked = Signal(object, object)  # (edge_key, parent_polygons)
+    context_menu_requested = Signal(object)
+
+    def __init__(self, edge_key, p1_name, p2_name, parent_polygons, parent=None):
+        super().__init__(edge_key, parent)
+        self.edge_key = edge_key
+        self.p1_name = p1_name
+        self.p2_name = p2_name
+        self.parent_polygons = parent_polygons  # Bu bir liste: [poly1, poly2, ...]
+        self.p1_pos = QPointF()
+        self.p2_pos = QPointF()
+        self._is_selected = False
+        self._is_hovered = False
+        self.setAcceptHoverEvents(True)
+        self.setZValue(150)
+
+    def set_line(self, p1: QPointF, p2: QPointF):
+        self.prepareGeometryChange()
+        self.p1_pos = p1
+        self.p2_pos = p2
+        self.update()
+
+    def set_selected_state(self, selected: bool):
+        self._is_selected = selected
+        self.update()
+
+    def hoverEnterEvent(self, event):
+        self._is_hovered = True
+        self.update()
+        super().hoverEnterEvent(event)
+
+    def hoverLeaveEvent(self, event):
+        self._is_hovered = False
+        self.update()
+        super().hoverLeaveEvent(event)
+
+    def boundingRect(self):
+        return QRectF(self.p1_pos, self.p2_pos).normalized().adjusted(-6, -6, 6, 6)
+
+    def shape(self):
+        path = QPainterPath()
+        path.moveTo(self.p1_pos)
+        path.lineTo(self.p2_pos)
+        stroker = QPainterPathStroker()
+        stroker.setWidth(10)
+        return stroker.createStroke(path)
+
+    def paint(self, painter, option, widget=None):
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        
+        if self._is_selected:
+            pen = QPen(QColor("#e91e63"), 4)
+        elif self._is_hovered:
+            pen = QPen(QColor("#ffc107"), 4)
+        else:
+            # Poligon sayısına göre renk değiştir
+            if len(self.parent_polygons) > 1:
+                pen = QPen(QColor("#9c27b0"), 3)  # Mor - paylaşılan kenar
+            else:
+                pen = QPen(QColor("#ff9800"), 3)  # Turuncu - tek poligon
+
+        painter.setPen(pen)
+        painter.drawLine(self.p1_pos, self.p2_pos)
+        
+        # Paylaşılan kenar olduğunu belirten küçük gösterge
+        if len(self.parent_polygons) > 1:
+            mid_x = (self.p1_pos.x() + self.p2_pos.x()) / 2
+            mid_y = (self.p1_pos.y() + self.p2_pos.y()) / 2
+            painter.setPen(QPen(QColor("#9c27b0"), 1))
+            painter.setBrush(QBrush(QColor("#9c27b0")))
+            painter.drawEllipse(QPointF(mid_x, mid_y), 4, 4)
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.MouseButton.LeftButton:
+            # parent_polygons bilgisini gönder
+            self.clicked.emit(self.edge_key, self.parent_polygons)
+            event.accept()
+            return
+        elif event.button() == Qt.MouseButton.RightButton:
+            self.context_menu_requested.emit(self.edge_key)
+            event.accept()
+            return
+        super().mousePressEvent(event)
+
+
+class PolygonItem(ClickableGraphicsItem):
+    def __init__(self, name, polygon_points, parent=None):
+        super().__init__(name, parent)
+        self.polygon_points = polygon_points
+        self.screen_polygon = QPolygonF()
+        self._is_selected = False
+        self._is_hovered = False
+        self.depth = 0
+
+    def set_polygon(self, qpolygon: QPolygonF, depth: float):
+        self.prepareGeometryChange()
+        self.screen_polygon = qpolygon
+        self.depth = depth
+        self.setZValue(50 + depth)
+
+    def set_selected_state(self, selected: bool):
+        self._is_selected = selected
+        self.update()
+
+    def hoverEnterEvent(self, event):
+        self._is_hovered = True
+        self.update()
+        super().hoverEnterEvent(event)
+
+    def hoverLeaveEvent(self, event):
+        self._is_hovered = False
+        self.update()
+        super().hoverLeaveEvent(event)
+
+    def boundingRect(self):
+        return self.screen_polygon.boundingRect().adjusted(-5, -5, 5, 5)
+
+    def shape(self):
+        path = QPainterPath()
+        path.addPolygon(self.screen_polygon)
+        return path
+
+    def paint(self, painter, option, widget=None):
+        if self.screen_polygon.isEmpty():
+            return
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        
+        if self._is_selected:
+            pen = QPen(QColor("#e91e63"), 2)
+            brush = QBrush(QColor(233, 30, 99, 100))
+        elif self._is_hovered:
+            pen = QPen(QColor("#ab47bc"), 2)
+            brush = QBrush(QColor(171, 71, 188, 70))
+        else:
+            pen = QPen(QColor("#7b1fa2"), 2)
+            brush = QBrush(QColor(123, 31, 162, 40))
+
+        painter.setPen(pen)
+        painter.setBrush(brush)
+        painter.drawPolygon(self.screen_polygon)
+
+
+class FrameItem(ClickableGraphicsItem):
+    def __init__(self, name, p1_name, p2_name, parent=None):
+        super().__init__(name, parent)
+        self.p1_name = p1_name
+        self.p2_name = p2_name
+        self.p1_pos = QPointF()
+        self.p2_pos = QPointF()
+        self._is_selected = False
+        self._is_hovered = False
+        self.setZValue(175)
+
+    def set_line(self, p1: QPointF, p2: QPointF):
+        self.prepareGeometryChange()
+        self.p1_pos = p1
+        self.p2_pos = p2
+        self.update()
+
+    def set_selected_state(self, selected: bool):
+        self._is_selected = selected
+        self.update()
+
+    def hoverEnterEvent(self, event):
+        self._is_hovered = True
+        self.update()
+        super().hoverEnterEvent(event)
+
+    def hoverLeaveEvent(self, event):
+        self._is_hovered = False
+        self.update()
+        super().hoverLeaveEvent(event)
+
+    def boundingRect(self):
+        return QRectF(self.p1_pos, self.p2_pos).normalized().adjusted(-8, -8, 8, 8)
+
+    def shape(self):
+        path = QPainterPath()
+        path.moveTo(self.p1_pos)
+        path.lineTo(self.p2_pos)
+        stroker = QPainterPathStroker()
+        stroker.setWidth(12)
+        return stroker.createStroke(path)
+
+    def paint(self, painter, option, widget=None):
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        
+        if self._is_selected:
+            pen = QPen(QColor("#e91e63"), 4)
+        elif self._is_hovered:
+            pen = QPen(QColor("#4fc3f7"), 4)
+        else:
+            pen = QPen(QColor("#1565c0"), 3)
+
+        painter.setPen(pen)
+        painter.drawLine(self.p1_pos, self.p2_pos)
+
+
+class LineItem(ClickableGraphicsItem):
+    def __init__(self, name, points_3d, parent=None):
+        super().__init__(name, parent)
+        self.points_3d = points_3d
+        self.screen_points = []
+        self._is_selected = False
+        self._is_hovered = False
+        self.setZValue(125)
+
+    def set_line(self, screen_points):
+        self.prepareGeometryChange()
+        self.screen_points = screen_points
+        self.update()
+
+    def set_selected_state(self, selected: bool):
+        self._is_selected = selected
+        self.update()
+
+    def hoverEnterEvent(self, event):
+        self._is_hovered = True
+        self.update()
+        super().hoverEnterEvent(event)
+
+    def hoverLeaveEvent(self, event):
+        self._is_hovered = False
+        self.update()
+        super().hoverLeaveEvent(event)
+
+    def boundingRect(self):
+        if not self.screen_points:
+            return QRectF()
+        min_x = min(p.x() for p in self.screen_points)
+        max_x = max(p.x() for p in self.screen_points)
+        min_y = min(p.y() for p in self.screen_points)
+        max_y = max(p.y() for p in self.screen_points)
+        return QRectF(min_x - 8, min_y - 8, max_x - min_x + 16, max_y - min_y + 16)
+
+    def shape(self):
+        path = QPainterPath()
+        if not self.screen_points:
+            return path
+        path.moveTo(self.screen_points[0])
+        for p in self.screen_points[1:]:
+            path.lineTo(p)
+        stroker = QPainterPathStroker()
+        stroker.setWidth(10)
+        return stroker.createStroke(path)
+
+    def paint(self, painter, option, widget=None):
+        if len(self.screen_points) < 2:
+            return
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        
+        if self._is_selected:
+            pen = QPen(QColor("#e91e63"), 3)
+        elif self._is_hovered:
+            pen = QPen(QColor("#66bb6a"), 3)
+        else:
+            pen = QPen(QColor("#2e7d32"), 2)
+
+        painter.setPen(pen)
+        path = QPainterPath()
+        path.moveTo(self.screen_points[0])
+        for p in self.screen_points[1:]:
+            path.lineTo(p)
+        painter.drawPath(path)
+
+
+# ElementPropertiesDialog - Düzeltilmiş versiyon
+class ElementPropertiesDialog(QDialog):
+    def __init__(self, elem_type, elem_id, properties, view3d, parent=None):
+        super().__init__(parent)
+        self.elem_type = elem_type
+        self.elem_id = elem_id
+        self.properties = properties
+        self.view3d = view3d
+        self.setWindowTitle(f"Özellikler - {elem_type}: {elem_id}")
+        self.setModal(True)
+        self.resize(500, 400)
+        self.setup_ui()
+        self._load_properties()
+        
+    def setup_ui(self):
+        layout = QVBoxLayout(self)
+        
+        title_label = QLabel(f"<h2>{self.elem_type}: {self.elem_id}</h2>")
+        layout.addWidget(title_label)
+        
+        self.table = QTableWidget()
+        self.table.setColumnCount(2)
+        self.table.setHorizontalHeaderLabels(["Özellik", "Değer"])
+        self.table.horizontalHeader().setStretchLastSection(True)
+        self.table.setEditTriggers(QTableWidget.EditTrigger.DoubleClicked | 
+                                   QTableWidget.EditTrigger.EditKeyPressed)
+        layout.addWidget(self.table)
+        
+        button_box = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | 
+                                      QDialogButtonBox.StandardButton.Cancel |
+                                      QDialogButtonBox.StandardButton.Apply)
+        button_box.accepted.connect(self.accept)
+        button_box.rejected.connect(self.reject)
+        button_box.button(QDialogButtonBox.StandardButton.Apply).clicked.connect(self.apply_changes)
+        layout.addWidget(button_box)
+
+    def _load_properties(self):
+        self.table.setRowCount(len(self.properties))
+        
+        for row, (key, value) in enumerate(self.properties.items()):
+            key_item = QTableWidgetItem(str(key))
+            key_item.setFlags(key_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
+            self.table.setItem(row, 0, key_item)
+            
+            value_item = QTableWidgetItem(str(value))
+            self.table.setItem(row, 1, value_item)
+
+    def _get_updated_properties(self):
+        updated = {}
+        for row in range(self.table.rowCount()):
+            key_item = self.table.item(row, 0)
+            value_item = self.table.item(row, 1)
+            
+            if key_item and value_item:
+                key = key_item.text()
+                value_str = value_item.text()
+                original_value = self.properties.get(key)
+                updated[key] = self._parse_value(value_str, original_value)
+        
+        return updated
+
+    def _parse_value(self, value_str, original_value):
+        if isinstance(original_value, list):
+            if ',' in value_str:
+                items = [item.strip() for item in value_str.split(',')]
+                try:
+                    return [float(item) if item.replace('.', '').replace('-', '').isdigit() else item for item in items]
+                except:
+                    return items
+            else:
+                return [value_str.strip()]
+        
+        elif isinstance(original_value, tuple):
+            if ',' in value_str:
+                items = [item.strip() for item in value_str.split(',')]
+                try:
+                    return tuple(float(item) if item.replace('.', '').replace('-', '').isdigit() else item for item in items)
+                except:
+                    return tuple(items)
+            else:
+                return (value_str.strip(),)
+        
+        elif isinstance(original_value, (int, float)):
+            try:
+                return float(value_str) if '.' in value_str else int(value_str)
+            except ValueError:
+                return value_str
+        
+        elif isinstance(original_value, bool):
+            return value_str.lower() in ('true', 'yes', '1', 'evet')
+        
+        else:
+            return value_str
+
+    def apply_changes(self):
+        updated_properties = self._get_updated_properties()
+        self._update_data(updated_properties)
+        QMessageBox.information(self, "Başarılı", "Değişiklikler uygulandı!")
+
+    def _update_data(self, updated_properties):
+        if self.elem_type == "POINT" and self.elem_id in self.view3d.points:
+            try:
+                x = float(updated_properties.get("X", 0))
+                y = float(updated_properties.get("Y", 0))
+                z = float(updated_properties.get("Z", 0))
+                self.view3d.points[self.elem_id] = (x, y, z)
+                self.view3d.draw_scene()
+            except ValueError as e:
+                QMessageBox.warning(self, "Hata", f"Geçersiz koordinat değeri: {e}")
+                
+        elif self.elem_type == "POLYGON" and self.elem_id in self.view3d.polygons:
+            points_str = updated_properties.get("Noktalar", "")
+            if isinstance(points_str, str):
+                points = [p.strip() for p in points_str.split(',') if p.strip()]
+                if points:
+                    self.view3d.polygons[self.elem_id] = points
+                    self.view3d.draw_scene()
+            elif isinstance(points_str, list):
+                self.view3d.polygons[self.elem_id] = points_str
+                self.view3d.draw_scene()
+                    
+        elif self.elem_type == "FRAME" and self.elem_id in self.view3d.frames:
+            start = updated_properties.get("Başlangıç", "")
+            end = updated_properties.get("Bitiş", "")
+            if start and end:
+                self.view3d.frames[self.elem_id] = (start, end)
+                self.view3d.draw_scene()
+
+    def accept(self):
+        self.apply_changes()
+        super().accept()
+
+
+# ShowObjectsDialog - Düzeltilmiş versiyon
+class ShowObjectsDialog(QDialog):
+    visibility_changed = Signal(str, str, bool)
+    
+    def __init__(self, view3d, parent=None):
+        super().__init__(parent)
+        self.view3d = view3d
+        self.setWindowTitle("Show Objects")
+        self.setModal(False)
+        self.resize(400, 500)
+        self.setMinimumSize(300, 400)
+        
+        self.setup_ui()
+        self.load_data()
+        
+    def setup_ui(self):
+        layout = QVBoxLayout(self)
+        
+        title_label = QLabel("<h3>Görünürlük Kontrolleri</h3>")
+        title_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        layout.addWidget(title_label)
+        
+        self.tree = QTreeWidget()
+        self.tree.setHeaderLabels(["Öğe Tipi", "ID", "Görünür"])
+        self.tree.header().setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
+        self.tree.header().setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
+        self.tree.header().setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)
+        self.tree.setIndentation(20)
+        layout.addWidget(self.tree)
+        
+        button_layout = QHBoxLayout()
+        
+        show_all_btn = QPushButton("Tümünü Göster")
+        show_all_btn.clicked.connect(self.show_all)
+        button_layout.addWidget(show_all_btn)
+        
+        hide_all_btn = QPushButton("Tümünü Gizle")
+        hide_all_btn.clicked.connect(self.hide_all)
+        button_layout.addWidget(hide_all_btn)
+        
+        layout.addLayout(button_layout)
+        
+        type_layout = QHBoxLayout()
+        types = ["POINT", "POLYGON", "EDGE", "FRAME", "LINE"]
+        type_labels = {
+            "POINT": "🔵 Noktalar",
+            "POLYGON": "🟢 Poligonlar",
+            "EDGE": "🔴 Kenarlar",
+            "FRAME": "🟠 Frame'ler",
+            "LINE": "🟣 Line'lar"
+        }
+        
+        for elem_type in types:
+            btn = QPushButton(type_labels.get(elem_type, elem_type))
+            btn.setProperty("type", elem_type)
+            btn.clicked.connect(lambda checked, t=elem_type: self.toggle_type_visibility(t))
+            btn.setMaximumWidth(100)
+            type_layout.addWidget(btn)
+        
+        layout.addLayout(type_layout)
+        
+        close_btn = QPushButton("Kapat")
+        close_btn.clicked.connect(self.accept)
+        layout.addWidget(close_btn)
+        
+    
+
+    def load_data(self):
+        """Mevcut verileri ağaca yükle"""
+        self.tree.clear()
+        
+        categories = {
+            "POINT": ("Noktalar", self.view3d.point_items),
+            "POLYGON": ("Poligonlar", self.view3d.polygon_items),
+            "FRAME": ("Frame'ler", self.view3d.frame_items),
+            "LINE": ("Line'lar", self.view3d.line_items),
+            "EDGE": ("Kenarlar", self.view3d.edge_items)
+        }
+        
+        for elem_type, (label, items) in categories.items():
+            if not items:
+                continue
+                
+            category_item = QTreeWidgetItem(self.tree)
+            category_item.setText(0, label)
+            category_item.setText(1, f"({len(items)} öğe)")
+            category_item.setText(2, "")
+            
+            font = category_item.font(0)
+            font.setBold(True)
+            category_item.setFont(0, font)
+            
+            for item_id, item in items.items():
+                child = QTreeWidgetItem(category_item)
+                child.setText(0, "")
+                child.setText(1, item_id)
+                
+                check_widget = QWidget()
+                check_layout = QHBoxLayout(check_widget)
+                check_layout.setContentsMargins(0, 0, 0, 0)
+                check_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
+                
+                checkbox = QCheckBox()
+                # Görünürlük durumunu View3D'den al
+                is_visible = self.view3d.get_visibility(elem_type, item_id)
+                checkbox.setChecked(is_visible)
+                checkbox.stateChanged.connect(
+                    lambda state, t=elem_type, i=item_id: self.on_visibility_changed(t, i, state)
+                )
+                check_layout.addWidget(checkbox)
+                
+                self.tree.setItemWidget(child, 2, check_widget)
+                child.setData(0, Qt.ItemDataRole.UserRole, (elem_type, item_id))
+            
+            category_item.setExpanded(True)
+    
+    def on_visibility_changed(self, elem_type, item_id, state):
+        is_visible = state == Qt.CheckState.Checked.value
+        self.visibility_changed.emit(elem_type, item_id, is_visible)
+        
+        if elem_type == "POINT" and item_id in self.view3d.point_items:
+            self.view3d.point_items[item_id].set_visible(is_visible)
+        elif elem_type == "POLYGON" and item_id in self.view3d.polygon_items:
+            self.view3d.polygon_items[item_id].set_visible(is_visible)
+        elif elem_type == "FRAME" and item_id in self.view3d.frame_items:
+            self.view3d.frame_items[item_id].set_visible(is_visible)
+        elif elem_type == "LINE" and item_id in self.view3d.line_items:
+            self.view3d.line_items[item_id].set_visible(is_visible)
+        elif elem_type == "EDGE" and item_id in self.view3d.edge_items:
+            self.view3d.edge_items[item_id].set_visible(is_visible)
+    
+    def toggle_type_visibility(self, elem_type):
+        items = []
+        if elem_type == "POINT":
+            items = list(self.view3d.point_items.items())
+        elif elem_type == "POLYGON":
+            items = list(self.view3d.polygon_items.items())
+        elif elem_type == "FRAME":
+            items = list(self.view3d.frame_items.items())
+        elif elem_type == "LINE":
+            items = list(self.view3d.line_items.items())
+        elif elem_type == "EDGE":
+            items = list(self.view3d.edge_items.items())
+        
+        if not items:
+            return
+            
+        all_visible = all(item.is_visible() if hasattr(item, 'is_visible') else True for _, item in items)
+        new_state = not all_visible
+        
+        for item_id, item in items:
+            if hasattr(item, 'set_visible'):
+                item.set_visible(new_state)
+                self.visibility_changed.emit(elem_type, item_id, new_state)
+        
+        self.update_tree()
+    
+    def show_all(self):
+        self._set_all_visibility(True)
+    
+    def hide_all(self):
+        self._set_all_visibility(False)
+    
+    def _set_all_visibility(self, visible):
+        all_items = [
+            (self.view3d.point_items, "POINT"),
+            (self.view3d.polygon_items, "POLYGON"),
+            (self.view3d.frame_items, "FRAME"),
+            (self.view3d.line_items, "LINE"),
+            (self.view3d.edge_items, "EDGE")
+        ]
+        
+        for items, elem_type in all_items:
+            for item_id, item in items.items():
+                if hasattr(item, 'set_visible'):
+                    item.set_visible(visible)
+                    self.visibility_changed.emit(elem_type, item_id, visible)
+        
+        self.update_tree()
+    
+    def update_tree(self):
+        for i in range(self.tree.topLevelItemCount()):
+            category = self.tree.topLevelItem(i)
+            for j in range(category.childCount()):
+                child = category.child(j)
+                widget = self.tree.itemWidget(child, 2)
+                if widget:
+                    checkbox = widget.findChild(QCheckBox)
+                    if checkbox:
+                        data = child.data(0, Qt.ItemDataRole.UserRole)
+                        if data:
+                            elem_type, item_id = data
+                            item = None
+                            if elem_type == "POINT" and item_id in self.view3d.point_items:
+                                item = self.view3d.point_items[item_id]
+                            elif elem_type == "POLYGON" and item_id in self.view3d.polygon_items:
+                                item = self.view3d.polygon_items[item_id]
+                            elif elem_type == "FRAME" and item_id in self.view3d.frame_items:
+                                item = self.view3d.frame_items[item_id]
+                            elif elem_type == "LINE" and item_id in self.view3d.line_items:
+                                item = self.view3d.line_items[item_id]
+                            elif elem_type == "EDGE" and item_id in self.view3d.edge_items:
+                                item = self.view3d.edge_items[item_id]
+                            
+                            if item and hasattr(item, 'is_visible'):
+                                checkbox.setChecked(item.is_visible())
