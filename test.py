@@ -1,102 +1,39 @@
-import sys
+from windcalc.windengine import BuildingWindEngine
 
+points = {
+"P1": (0.0, 0.0, 0.0),
+"P2": (12000.0, 0.0, 0.0),
+"P3": (12000.0, 8000.0, 0.0),
+"P4": (0.0, 8000.0, 0.0),
+"P5": (0.0, 0.0, 4000.0),
+"P6": (12000.0, 0.0, 4000.0),
+"P7": (12000.0, 8000.0, 4000.0),
+"P8": (0.0, 8000.0, 4000.0),
+"P9": (3000.0, 4000.0, 5000.0),
+"P10": (12000.0, 4000.0, 5000.0),
+}
 
+polygons = {
+"D1": ["P1", "P2", "P6", "P5"],
+"D2": ["P1", "P5", "P8", "P4"],
+"D3": ["P2", "P3", "P7", "P10", "P6"],
+"D4": ["P3", "P4", "P8", "P7"],
+"C1": ["P5", "P6", "P10", "P9"],
+"C2": ["P8", "P9", "P10", "P7"],
+"C3": ["P8", "P5", "P9"],
+}
 
+p1_selected= (0.0, 0.0, 0.0)
+p2_selected= (12000.0, 0.0, 0.0)
 
-from PySide6.QtWidgets import (
-    QApplication,
-    QMainWindow,
-    QWidget,
-    QVBoxLayout,
-    QHBoxLayout,
-    QPushButton,
-)
+building= BuildingWindEngine(points=points, polygons=polygons, scale_factor=1000)
 
-from canvas3d import View3D
+geom_results = building.calculate_obb_and_geometry(
+        p1_selected, p2_selected, building.raw_points
+    )
 
-class ButtonBar(QWidget):
+render_lines = building.generate_render_lines(geom_results)
 
-    def __init__(self, parent=None, buttons=None):
-        super().__init__(parent)
-
-        layout = QHBoxLayout(self)
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(3)
-
-        if buttons:
-            for text, callback in buttons.items():
-                button = QPushButton(text)
-                button.clicked.connect(callback)
-
-                # Buton kendi boyutunda kalsın
-                button.setFixedWidth(70)
-
-                layout.addWidget(button)
-
-
-class MainWindow(QMainWindow):
-
-    def __init__(self):
-        super().__init__()
-
-        self.setWindowTitle("3D Viewer")
-        self.setGeometry(100, 100, 800, 600)
-
-        self.view3d = View3D(self)
-
-        self.setup_ui()
-
-    def setup_ui(self):
-
-        central_widget = QWidget()
-        self.setCentralWidget(central_widget)
-
-        main_layout = QVBoxLayout(central_widget)
-        main_layout.setContentsMargins(5, 5, 5, 5)
-        main_layout.setSpacing(5)
-
-        # -----------------
-        # ButtonBar
-        # -----------------
-
-        buttons = {
-            "Yeni": self.new_file,
-            "Aç": self.open_file,
-            "Kaydet": self.save_file,
-            "Sil": self.delete_file,
-        }
-
-        buttonbar = ButtonBar(self, buttons)
-
-        # ButtonBar üstte, kendi boyutunda
-        main_layout.addWidget(buttonbar)
-
-        # View3D kalan bütün alanı kaplar
-        main_layout.addWidget(self.view3d, 1)
-
-        # -----------------
-        # StatusBar
-        # -----------------
-
-        self.statusBar().showMessage("Hazır")
-
-    def new_file(self):
-        self.statusBar().showMessage("Yeni dosya")
-
-    def open_file(self):
-        self.statusBar().showMessage("Dosya açılıyor...")
-
-    def save_file(self):
-        self.statusBar().showMessage("Dosya kaydedildi")
-
-    def delete_file(self):
-        self.statusBar().showMessage("Silindi")
-
-
-app = QApplication(sys.argv)
-
-window = MainWindow()
-window.show()
-
-sys.exit(app.exec())
-
+print(building.geometry)
+print(render_lines)
+print(geom_results)

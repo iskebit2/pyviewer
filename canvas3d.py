@@ -1,5 +1,6 @@
 #canvas3d.py
-
+import faulthandler
+faulthandler.enable()   # segfault olduğunda traceback basar
 from dataclasses import dataclass
 import math
 import traceback
@@ -9,7 +10,7 @@ from PySide6.QtCore import QPoint, Qt, QPointF, Signal
 from PySide6.QtGui import QColor, QPainter, QPen, QPolygonF, QPainterPath, QKeySequence, QShortcut, QAction
 from PySide6.QtWidgets import (QGraphicsView, QGraphicsScene, QGraphicsPathItem, QMenu, QMessageBox)
 
-from domains import AxisItem, Camera3D, ElementPropertiesDialog, PointItem, Vec3, PolygonItem, FrameItem, LineItem, EdgeItem, ShowObjectsDialog
+from domains import AxisItem, Camera3D, ElementPropertiesDialog, PointItem, Vec3, PolygonItem, FrameItem, EdgeItem, ShowObjectsDialog
 
 logging.basicConfig(
     level=logging.INFO,
@@ -39,18 +40,18 @@ class View3D(QGraphicsView):
         self.camera = Camera3D()
         self.points = {}
         self.polygons = {}
-        self.lines = {}
+        self.lines = []
         self.frames = {}
         
         self.point_items = {}
         self.polygon_items = {}
         self.edge_items = {}
         self.frame_items = {}
-        self.line_items = {}
+        
         self.graphics_line_items = []
 
-        # Görünürlük durumları - TÜM ÖĞELER İÇİN
         self._visibility_states = {}
+        self._color_overrides = {}
 
         self.multi_selection_mode = False
         self.selected_items = {
@@ -102,6 +103,8 @@ class View3D(QGraphicsView):
 
         self.context_menu_action.connect(self.on_context_menu_action)
         self.delete_requested.connect(self.delete_selected_elements)
+        self.polygon_created.connect(self._on_polygon_created)
+
         logging.debug("View3D: Initialization complete")
 
     def toggle_debug(self):
@@ -124,7 +127,7 @@ class View3D(QGraphicsView):
         
         self.points = points if points is not None else {}
         self.polygons = polygons if polygons is not None else {}
-        self.lines = lines if lines is not None else {}
+        self.lines = lines if lines is not None else []
         self.frames = frames if frames is not None else {}
         
         # Görünürlük durumlarını temizle
@@ -157,14 +160,14 @@ class View3D(QGraphicsView):
         self.draw_scene()
         logging.debug(f"View3D: Rebuild complete - Points: {len(self.point_items)}, "
                       f"Polygons: {len(self.polygon_items)}, "
-                      f"Lines: {len(self.line_items)}, "
+                      f"Lines: {len(self.graphics_line_items)}, "
                       f"Frames: {len(self.frame_items)}")
 
     def _clear_all_items(self):
         """Tüm grafik öğelerini temizler"""
         for item in list(self.point_items.values()) + list(self.polygon_items.values()) + \
                     list(self.edge_items.values()) + list(self.frame_items.values()) + \
-                    list(self.line_items.values()) + self.graphics_line_items:
+                    self.graphics_line_items:
             try:
                 if item and item.scene():
                     self.scene.removeItem(item)
@@ -175,7 +178,7 @@ class View3D(QGraphicsView):
         self.polygon_items.clear()
         self.edge_items.clear()
         self.frame_items.clear()
-        self.line_items.clear()
+
         self.graphics_line_items.clear()
 
     def _get_visibility_key(self, elem_type, item_id):
@@ -207,9 +210,9 @@ class View3D(QGraphicsView):
         elif elem_type == "FRAME" and item_id in self.frame_items:
             self.frame_items[item_id].setVisible(visible)
             self.frame_items[item_id]._is_visible = visible
-        elif elem_type == "LINE" and item_id in self.line_items:
-            self.line_items[item_id].setVisible(visible)
-            self.line_items[item_id]._is_visible = visible
+        # elif elem_type == "LINE" and item_id in self.line_items:
+        #     self.line_items[item_id].setVisible(visible)
+        #     self.line_items[item_id]._is_visible = visible
         elif elem_type == "EDGE" and item_id in self.edge_items:
             self.edge_items[item_id].setVisible(visible)
             self.edge_items[item_id]._is_visible = visible
@@ -259,43 +262,46 @@ class View3D(QGraphicsView):
 
     def draw_scene(self):
         logging.debug("View3D: Drawing scene...")
-        
-        # Mevcut öğeleri temizle (axis_item hariç)
-        for item in list(self.polygon_items.values()) + list(self.edge_items.values()) + \
-                    list(self.frame_items.values()) + list(self.line_items.values()):
-            try:
-                if item and item.scene():
-                    self.scene.removeItem(item)
-            except RuntimeError:
-                pass
-        
-        self.polygon_items.clear()
-        self.edge_items.clear()
-        self.frame_items.clear()
-        self.line_items.clear()
+        try:
+            # Mevcut öğeleri temizle (axis_item hariç)
+            for item in list(self.polygon_items.values()) + list(self.edge_items.values()) + \
+                list(self.frame_items.values()) + self.graphics_line_items:
+                try:
+                    if item and item.scene():
+                        self.scene.removeItem(item)
+                except RuntimeError:
+                    pass
+            
+            self.polygon_items.clear()
+            self.edge_items.clear()
+            self.frame_items.clear()
+            self.graphics_line_items.clear()
 
-        # Noktaları güncelle
-        self._update_point_positions()
+            # Noktaları güncelle
+            self._update_point_positions()
 
-        # Poligonları çiz
-        self._draw_polygons()
+            # Poligonları çiz
+            self._draw_polygons()
 
-        # Frame'leri çiz
-        self._draw_frames()
+            # Frame'leri çiz
+            self._draw_frames()
 
-        # Line'ları çiz
-        self._draw_lines()
+            # Line'ları çiz
+            self._draw_lines()
 
-        # Edge'leri çiz
-        if self.edge_selection_mode:
-            self._draw_edges()
+            # Edge'leri çiz
+            if self.edge_selection_mode:
+                self._draw_edges()
 
-        # Eksenleri en son çiz - 0,0,0'da
-        self._draw_axis()
+            # Eksenleri en son çiz - 0,0,0'da
+            self._draw_axis()
 
-        self.update_preview_path()
-        self.viewport().update()
-        logging.debug("View3D: Scene drawing complete")
+            self.update_preview_path()
+            self.viewport().update()
+            logging.debug("View3D: Scene drawing complete")
+        except Exception as e:
+            logging.error(f"draw_scene error: {e}")
+            logging.error(traceback.format_exc())
 
     def _draw_axis(self):
         """Eksenleri 0,0,0 konumunda çiz"""
@@ -304,7 +310,7 @@ class View3D(QGraphicsView):
             try:
                 self.scene.removeItem(self.axis_item)
             except:
-                pass
+                logging.error(traceback.format_exc())
             self.axis_item = None
         
         # Eksenleri gösteriliyorsa oluştur
@@ -326,6 +332,11 @@ class View3D(QGraphicsView):
                 visible = self._get_visibility("POINT", name)
                 self.point_items[name].setVisible(visible)
                 self.point_items[name]._is_visible = visible
+
+                # Renkleri uygula
+                override = self._color_overrides.get(self._color_key("POINT", name))
+                if override:
+                    self.point_items[name].set_color(override)
 
     def _draw_polygons(self):
         """Poligonları çizer"""
@@ -361,9 +372,14 @@ class View3D(QGraphicsView):
                 visible = self._get_visibility("POLYGON", poly_name)
                 poly_item.setVisible(visible)
                 poly_item._is_visible = visible
+                # Renkleri uygula
+                override = self._color_overrides.get(self._color_key("POLYGON", poly_name))
+                if override:
+                    poly_item.set_color(override)
 
                 self.polygon_items[poly_name] = poly_item
                 self.scene.addItem(poly_item)
+
 
     def _draw_frames(self):
         """Frame'leri çizer"""
@@ -393,57 +409,73 @@ class View3D(QGraphicsView):
                 frame_item.setVisible(visible)
                 frame_item._is_visible = visible
 
+                # Renkleri uygula
+                override = self._color_overrides.get(self._color_key("FRAME", frame_name))
+                if override:
+                    frame_item.set_color(override)
+
                 self.frame_items[frame_name] = frame_item
                 self.scene.addItem(frame_item)
 
     def _draw_lines(self):
-        """Line'ları çizer"""
-        for line_name, point_list in self.lines.items():
+        """Line'ları çizer - tıklanamaz, seçilemez, sadece render edilir"""
+        for i_, point_list in enumerate(self.lines):
+            line_name = f"line_{i_}"
+
+            if not self._get_visibility("LINE", line_name):
+                continue
+
             screen_points = []
             depths = []
-        
+
             for p in point_list:
                 coords = None
                 if isinstance(p, str):
-                    if p in self.points:
-                        coords = self.points[p]
+                    coords = self.points.get(p)
                 else:
                     coords = p
-        
-                if coords is not None:
-                    flat_coords = np.asarray(coords, dtype=float).ravel()
-                    x = float(flat_coords[0])
-                    y = float(flat_coords[1])
-                    z = float(flat_coords[2])
-                
-                    pos, depth = self.screen_position(Vec3(x, y, z))
-                    screen_points.append(pos)
-                    depths.append(depth)
-        
-            if len(screen_points) >= 2:
-                line_item = LineItem(line_name, point_list)
-                line_item.set_line(screen_points)
-                line_item.clicked.connect(lambda n=line_name: self.on_line_clicked(n))
-                line_item.context_menu_requested.connect(
-                    lambda n=line_name: self.show_context_menu("LINE", n)
-                )
-                line_item.visibility_changed.connect(
-                    lambda n, v: self._on_visibility_changed("LINE", n, v)
-                )
 
-                avg_depth = sum(depths) / len(depths) if depths else 0
-                line_item.setZValue(125 + avg_depth)
-        
-                if self._is_item_selected("LINE", line_name):
-                    line_item.set_selected_state(True)
+                if coords is None:
+                    continue
 
-                # Görünürlüğü uygula
-                visible = self._get_visibility("LINE", line_name)
-                line_item.setVisible(visible)
-                line_item._is_visible = visible
-        
-                self.line_items[line_name] = line_item
-                self.scene.addItem(line_item)
+                try:
+                    flat = np.asarray(coords, dtype=float).ravel()
+                    if flat.size < 3:
+                        continue
+                    x, y, z = float(flat[0]), float(flat[1]), float(flat[2])
+                except (ValueError, TypeError):
+                    continue
+
+                pos, depth = self.screen_position(Vec3(x, y, z))
+                screen_points.append(pos)
+                depths.append(depth)
+
+            if len(screen_points) < 2:
+                continue
+
+            # Renk override
+            override = self._color_overrides.get(self._color_key("LINE", line_name))
+            pen = QPen(override if override else QColor("#2c3e50"), 1.5)
+            pen.setCosmetic(True)
+
+            path = QPainterPath()
+            path.moveTo(screen_points[0])
+            for pt in screen_points[1:]:
+                path.lineTo(pt)
+
+            graphics_item = QGraphicsPathItem(path)
+            graphics_item.setPen(pen)                        # ✅ aynı pen
+            graphics_item.setBrush(Qt.BrushStyle.NoBrush)
+
+            avg_depth = sum(depths) / len(depths) if depths else 0
+            graphics_item.setZValue(125 + avg_depth)
+
+            graphics_item.setFlag(QGraphicsPathItem.GraphicsItemFlag.ItemIsSelectable, False)
+            graphics_item.setAcceptedMouseButtons(Qt.MouseButton.NoButton)
+            graphics_item.setEnabled(False)
+
+            self.graphics_line_items.append(graphics_item)
+            self.scene.addItem(graphics_item)
 
     def _draw_edges(self):
         """Edge'leri çizer"""
@@ -560,18 +592,23 @@ class View3D(QGraphicsView):
             self._emit_multi_selection()
 
     def _update_selection_states(self):
-        logging.debug("View3D: Updating selection states")
-        
         for item_dict, item_type in [
             (self.point_items, "POINT"),
             (self.polygon_items, "POLYGON"),
             (self.edge_items, "EDGE"),
             (self.frame_items, "FRAME"),
-            (self.line_items, "LINE")
         ]:
             for item_id, item in item_dict.items():
-                is_selected = self._is_item_selected(item_type, item_id)
-                item.set_selected_state(is_selected)
+                try:
+                    is_selected = self._is_item_selected(item_type, item_id)
+                    if hasattr(item, 'set_selected_state'):
+                        item.set_selected_state(is_selected)
+                except RuntimeError as e:
+                    # C++ nesnesi silinmiş, atla
+                    logging.warning(f"_update_selection_states skip {item_type}:{item_id} - {e}")
+                    continue
+                    
+            
 
     def _emit_multi_selection(self):
         all_selected = []
@@ -583,21 +620,22 @@ class View3D(QGraphicsView):
 
     def clear_selection(self):
         logging.debug("View3D: Clearing selection")
-        
+
         self.selected_type = None
         self.selected_id = None
         self.multi_selection_mode = False
-        
+
         for key in self.selected_items:
             self.selected_items[key].clear()
-        
+
         self.creation_sequence.clear()
         self.update_preview_path()
-        
-        for item_dict in [self.point_items, self.polygon_items, 
-                          self.edge_items, self.frame_items, self.line_items]:
+
+        for item_dict in [self.point_items, self.polygon_items,
+                        self.edge_items, self.frame_items]:
             for item in item_dict.values():
                 item.set_selected_state(False)
+
         self.multi_selection_changed.emit([])
         self.element_selected.emit(None, None, None)
 
@@ -778,15 +816,16 @@ class View3D(QGraphicsView):
     def _select_all_edge_polygons(self, dialog, parent_polygons):
         """Kenarın tüm poligonlarını seçer"""
         self.clear_selection()
-        
+
         for poly_name in parent_polygons:
             if poly_name in self.polygon_items:
-                self.selected_items["POLYGON"].add(poly_name)
-        
+                if poly_name not in self.selected_items["POLYGON"]:
+                    self.selected_items["POLYGON"].append(poly_name)
+
         self.multi_selection_mode = True
         self._update_selection_states()
         self._emit_multi_selection()
-        
+
         logging.info(f"View3D: Selected {len(parent_polygons)} polygons sharing edge")
         dialog.accept()
 
@@ -825,17 +864,17 @@ class View3D(QGraphicsView):
         self.multi_selection_mode = True
         self.selected_type = None
         self.selected_id = None
-        
+
         for item_dict, item_type in [
             (self.point_items, "POINT"),
             (self.polygon_items, "POLYGON"),
             (self.edge_items, "EDGE"),
             (self.frame_items, "FRAME"),
-            (self.line_items, "LINE")
         ]:
             for name in item_dict.keys():
-                self.selected_items[item_type].add(name)
-            
+                if name not in self.selected_items[item_type]:
+                    self.selected_items[item_type].append(name)
+
         self._update_selection_states()
         self._emit_multi_selection()
 
@@ -866,7 +905,8 @@ class View3D(QGraphicsView):
             if len(flat) >= 3:
                 all_points[k] = (float(flat[0]), float(flat[1]), float(flat[2]))
     
-        for line_name, point_list in self.lines.items():
+        for i_, point_list in enumerate(self.lines):
+            line_name= f"line_{i_}"
             for i, p in enumerate(point_list):
                 if not isinstance(p, str):
                     flat = np.asarray(p, dtype=float).ravel()
@@ -1111,7 +1151,6 @@ class View3D(QGraphicsView):
             "POLYGON": self._add_polygon_menu_items,
             "EDGE": self._add_edge_menu_items,
             "FRAME": self._add_frame_menu_items,
-            "LINE": self._add_line_menu_items
         }
         
         handler = handlers.get(item_type)
@@ -1119,6 +1158,13 @@ class View3D(QGraphicsView):
             handler(menu, item_id)
 
     def _add_action_menu_items(self, menu, item_type, item_id):
+        color_action = QAction("Renk Değiştir...", menu)
+        color_action.triggered.connect(
+            lambda: self.context_menu_action.emit(
+                "CHANGE_COLOR", {"type": item_type, "id": item_id}
+            )
+        )
+        menu.addAction(color_action)
         delete_action = QAction("Delete", menu)
         delete_action.triggered.connect(
             lambda: self.context_menu_action.emit("DELETE", {"type": item_type, "id": item_id})
@@ -1230,12 +1276,7 @@ class View3D(QGraphicsView):
             info_action.setEnabled(False)
             menu.addAction(info_action)
     
-    def _add_line_menu_items(self, menu, line_id):
-        if line_id in self.lines:
-            points = self.lines[line_id]
-            info_action = QAction(f"Points: {len(points)}", menu)
-            info_action.setEnabled(False)
-            menu.addAction(info_action)
+    
 
     def _show_objects_dialog(self):
         logging.debug("View3D: show_objects_dialog called")
@@ -1274,38 +1315,18 @@ class View3D(QGraphicsView):
 
 
     def _clear_items_safely(self):
-        """Öğeleri güvenli bir şekilde temizler"""
-        
         def safe_remove(item_dict):
             for item_id, item in list(item_dict.items()):
-                try:
-                    if item:
-                        # Mouse grab'ı kontrol et
-                        if hasattr(item, 'grabber'):
-                            try:
-                                if item.grabber():
-                                    item.ungrabMouse()
-                            except RuntimeError:
-                                pass
-                        
-                        if item.scene():
-                            item.scene().removeItem(item)
-                except RuntimeError as e:
-                    if "wrapped C/C++ object has been deleted" in str(e):
-                        pass
-                    else:
-                        logging.warning(f"Error removing item: {e}")
-            
+                if item:
+                    if item.scene():
+                        item.scene().removeItem(item)
             item_dict.clear()
-        
-        # Tüm öğeleri güvenli şekilde temizle
+
         safe_remove(self.point_items)
         safe_remove(self.polygon_items)
         safe_remove(self.edge_items)
         safe_remove(self.frame_items)
-        safe_remove(self.line_items)
-        
-        # Graphics line items
+
         for item in list(self.graphics_line_items):
             try:
                 if item and item.scene():
@@ -1325,10 +1346,7 @@ class View3D(QGraphicsView):
 
     def show_objects_dialog(self):
             """Show Objects dialog'u göster"""
-            if hasattr(self, 'view3d') and self:
-                self.show_objects_dialog()
-            else:
-                QMessageBox.warning(self, "Hata", "3D görünümü bulunamadı!")
+            self._show_objects_dialog()
     
     def on_context_menu_action(self, action_name, data):
         """Context menu aksiyonlarını işler"""
@@ -1337,6 +1355,16 @@ class View3D(QGraphicsView):
         try:
             if action_name == "DELETE":
                 self._handle_delete_action(data)
+
+            elif action_name == "CHANGE_COLOR":
+                elem_type = data.get("type")
+                elem_id = data.get("id")
+                if elem_type and elem_id:
+                    from PySide6.QtWidgets import QColorDialog
+                    current = self.get_element_color(elem_type, elem_id) or QColor("#1976d2")
+                    color = QColorDialog.getColor(current, self, f"{elem_type}: {elem_id} Rengi")
+                    if color.isValid():
+                        self.set_element_color(elem_type, elem_id, color)
                 
             elif action_name == "TOGGLE_VISIBILITY":
                 elem_type = data.get("type")
@@ -1392,12 +1420,16 @@ class View3D(QGraphicsView):
                     self._emit_multi_selection()
                     
             elif action_name == "NEW_POINT":
-                pos = data.get("pos")
-                logging.info(f"New point at position: {pos}")
-                # Yeni nokta oluşturma işlemi
-                
+                pos = data.get("pos")   # QPointF — viewport koordinatı
+                if pos is not None:
+                    self._create_point_at_screen_pos(pos)
+
             elif action_name == "NEW_POLYGON":
-                logging.info("New polygon creation requested")
+                # Draw mode'u aç, kullanıcı noktalara tıklayarak poligon oluştursun
+                self.draw_mode = True
+                self.creation_sequence.clear()
+                self.update_preview_path()
+                logging.info("Draw mode enabled for polygon creation")
                 
             elif action_name == "RESET_VIEW":
                 self.camera.yaw = math.radians(-55)
@@ -1534,14 +1566,21 @@ class View3D(QGraphicsView):
                 "Bağlı Poligonlar": ", ".join(edge_item.parent_polygons) if edge_item.parent_polygons else "Yok",
             }
                 
-        elif elem_type == "LINE" and elem_id in self.lines:
-            points = self.lines[elem_id]
-            properties = {
-                "Tür": "Line",
-                "ID": elem_id,
-                "Nokta Sayısı": len(points),
-                "Noktalar": ", ".join([str(p) for p in points]) if points else "",
-            }
+        elif elem_type == "LINE":
+            idx = None
+            if isinstance(elem_id, str) and elem_id.startswith("line_"):
+                try:
+                    idx = int(elem_id.split("_", 1)[1])
+                except ValueError:
+                    idx = None
+            if idx is not None and 0 <= idx < len(self.lines):
+                points = self.lines[idx]
+                properties = {
+                    "Tür": "Line",
+                    "ID": elem_id,
+                    "Nokta Sayısı": len(points),
+                    "Noktalar": ", ".join(str(p) for p in points),
+                }
         
         return properties
 
@@ -1666,11 +1705,7 @@ class View3D(QGraphicsView):
             if hasattr(item, 'setSelected'):
                 item.setSelected(False)
             
-            if hasattr(item, 'grabber') and item.grabber():
-                try:
-                    item.ungrabMouse()
-                except RuntimeError:
-                    pass
+            
             
             if item.scene():
                 item.scene().removeItem(item)
@@ -1686,28 +1721,39 @@ class View3D(QGraphicsView):
                 logging.warning(f"Error removing item {item_id}: {e}")
 
     def _delete_polygon(self, polygon_id):
-        """Poligon siler - Güvenli silme"""
+        logging.info(f"_delete_polygon START: {polygon_id}")
         if polygon_id not in self.polygons:
+            logging.info(f"  {polygon_id} not in polygons, skip")
             return
-        
         try:
-            if polygon_id in self.polygon_items:
-                item = self.polygon_items[polygon_id]
-                self._safe_remove_item(item, self.polygon_items, polygon_id)
-            
-            if polygon_id in self.polygons:
-                del self.polygons[polygon_id]
-            
-            if self.edge_selection_mode:
-                self.draw_scene()
-            
+            # 1. SEÇİMDEN ÇIKAR — en kritik adım
+            if self.selected_id == polygon_id:
+                self.selected_id = None
+                self.selected_type = None
+            if polygon_id in self.selected_items.get("POLYGON", []):
+                self.selected_items["POLYGON"].remove(polygon_id)
+
+            # 2. SAHNEDEN KALDIR
+            item = self.polygon_items.pop(polygon_id, None)
+            if item:
+                try:
+                    if item.scene():
+                        item.scene().removeItem(item)
+                except RuntimeError:
+                    pass
+
+            # 3. VERİ MODELİNDEN SİL
+            self.polygons.pop(polygon_id, None)
+
+            # 4. RENK/GÖRÜNÜRLÜK STATE'LERİNİ TEMİZLE
+            self._color_overrides.pop(self._color_key("POLYGON", polygon_id), None)
+            self._visibility_states.pop(self._get_visibility_key("POLYGON", polygon_id), None)
+
             logging.info(f"Polygon {polygon_id} deleted successfully")
-            
-        except RuntimeError as e:
-            if "wrapped C/C++ object has been deleted" in str(e):
-                logging.warning(f"Polygon {polygon_id} already deleted")
-            else:
-                raise e
+
+        except Exception as e:
+            logging.error(f"_delete_polygon error: {e}")
+            logging.error(traceback.format_exc())
 
     def _delete_point(self, point_id):
         """Nokta siler - Güvenli silme"""
@@ -1720,11 +1766,7 @@ class View3D(QGraphicsView):
             if point_id in self.point_items:
                 item = self.point_items[point_id]
                 
-                try:
-                    if hasattr(item, 'grabber') and item.grabber():
-                        item.ungrabMouse()
-                except RuntimeError:
-                    pass
+                
                 
                 if item.scene():
                     item.scene().removeItem(item)
@@ -1734,7 +1776,8 @@ class View3D(QGraphicsView):
             
             if point_id in self.points:
                 del self.points[point_id]
-            
+
+            self._color_overrides.pop(self._color_key("POINT", point_id), None)
             logging.info(f"Point {point_id} deleted successfully")
             
         except RuntimeError as e:
@@ -1744,31 +1787,21 @@ class View3D(QGraphicsView):
                 raise e
 
     def _delete_dependent_elements(self, point_id):
-        """Bir noktaya bağlı tüm öğeleri siler"""
-        polygons_to_delete = []
-        for poly_name, poly_points in self.polygons.items():
-            if point_id in poly_points:
-                polygons_to_delete.append(poly_name)
-        
-        for poly_name in polygons_to_delete:
-            self._delete_polygon(poly_name)
-        
-        frames_to_delete = []
-        for frame_name, (p1, p2) in self.frames.items():
-            if point_id == p1 or point_id == p2:
-                frames_to_delete.append(frame_name)
-        
-        for frame_name in frames_to_delete:
-            self._delete_frame(frame_name)
-        
+        polygons_to_delete = [name for name, pts in self.polygons.items() if point_id in pts]
+        for name in polygons_to_delete:
+            self._delete_polygon(name)
+
+        frames_to_delete = [name for name, (p1, p2) in self.frames.items() if point_id in (p1, p2)]
+        for name in frames_to_delete:
+            self._delete_frame(name)
+
+        # Liste üzerinde ters sırayla sil
         lines_to_delete = []
-        for line_name, line_points in self.lines.items():
-            if all(isinstance(p, str) for p in line_points):
-                if point_id in line_points:
-                    lines_to_delete.append(line_name)
-        
-        for line_name in lines_to_delete:
-            self._delete_line(line_name)
+        for idx, line_points in enumerate(self.lines):
+            if all(isinstance(p, str) for p in line_points) and point_id in line_points:
+                lines_to_delete.append(idx)
+        for idx in sorted(lines_to_delete, reverse=True):
+            self._delete_line(f"line_{idx}")
 
     def _delete_frame(self, frame_id):
         """Frame siler - Güvenli silme"""
@@ -1779,11 +1812,7 @@ class View3D(QGraphicsView):
             if frame_id in self.frame_items:
                 item = self.frame_items[frame_id]
                 
-                try:
-                    if hasattr(item, 'grabber') and item.grabber():
-                        item.ungrabMouse()
-                except RuntimeError:
-                    pass
+                
                 
                 if item.scene():
                     item.scene().removeItem(item)
@@ -1793,7 +1822,8 @@ class View3D(QGraphicsView):
             
             if frame_id in self.frames:
                 del self.frames[frame_id]
-            
+
+            self._color_overrides.pop(self._color_key("FRAME", frame_id), None)
             logging.info(f"Frame {frame_id} deleted successfully")
             
         except RuntimeError as e:
@@ -1803,36 +1833,24 @@ class View3D(QGraphicsView):
                 raise e
 
     def _delete_line(self, line_id):
-        """Line siler - Güvenli silme"""
-        if line_id not in self.lines:
-            return
-        
+        """Line siler — sadece veri silinir, sonra sahne yeniden çizilir"""
         try:
-            if line_id in self.line_items:
-                item = self.line_items[line_id]
-                
-                try:
-                    if hasattr(item, 'grabber') and item.grabber():
-                        item.ungrabMouse()
-                except RuntimeError:
-                    pass
-                
-                if item.scene():
-                    item.scene().removeItem(item)
-                
-                if line_id in self.line_items:
-                    del self.line_items[line_id]
-            
-            if line_id in self.lines:
-                del self.lines[line_id]
-            
-            logging.info(f"Line {line_id} deleted successfully")
-            
-        except RuntimeError as e:
-            if "wrapped C/C++ object has been deleted" in str(e):
-                logging.warning(f"Line {line_id} already deleted")
-            else:
-                raise e
+            idx = None
+            if isinstance(line_id, str) and line_id.startswith("line_"):
+                idx = int(line_id.split("_", 1)[1])
+            elif isinstance(line_id, int):
+                idx = line_id
+            if idx is None or idx < 0 or idx >= len(self.lines):
+                return
+
+            del self.lines[idx]
+
+            key = self._get_visibility_key("LINE", f"line_{idx}")
+            self._visibility_states.pop(key, None)
+            self._color_overrides.pop(self._color_key("LINE", f"line_{idx}"), None)
+            logging.info(f"Line {idx} deleted successfully")
+        except Exception as e:
+            logging.warning(f"Error deleting line {line_id}: {e}")
 
     def _delete_edge(self, edge_id):
         """Edge siler - Güvenli silme"""
@@ -1843,18 +1861,15 @@ class View3D(QGraphicsView):
             if edge_id in self.edge_items:
                 item = self.edge_items[edge_id]
                 
-                try:
-                    if hasattr(item, 'grabber') and item.grabber():
-                        item.ungrabMouse()
-                except RuntimeError:
-                    pass
+                
                 
                 if item.scene():
                     item.scene().removeItem(item)
                 
                 if edge_id in self.edge_items:
                     del self.edge_items[edge_id]
-            
+
+            self._color_overrides.pop(self._color_key("EDGE", edge_id), None)
             logging.info(f"Edge {edge_id} deleted successfully")
             
         except RuntimeError as e:
@@ -1873,3 +1888,208 @@ class View3D(QGraphicsView):
         self.show_axes = not self.show_axes
         logging.info(f"View3D: Axes visibility: {self.show_axes}")
         self.draw_scene()
+
+    def set_selected_items_color(self, color):
+        """Seçili tüm öğelere aynı rengi uygula."""
+        if self.multi_selection_mode:
+            for elem_type, ids in self.get_multi_selected().items():
+                for elem_id in ids:
+                    self.set_element_color(elem_type, elem_id, color)
+        elif self.selected_type and self.selected_id:
+            self.set_element_color(self.selected_type, self.selected_id, color)
+            
+    def _color_key(self, elem_type, elem_id):
+        return f"{elem_type}:{elem_id}"
+
+    def set_element_color(self, elem_type, elem_id, color):
+        """Bir öğenin ana rengini override et."""
+        c = QColor(color)
+        self._color_overrides[self._color_key(elem_type, elem_id)] = c
+
+        # Canlı güncelle
+        self._apply_color_to_item(elem_type, elem_id, c)
+
+        if self.show_objects_dialog and self.show_objects_dialog.isVisible():
+            self.show_objects_dialog.update_tree()
+
+    def get_element_color(self, elem_type, elem_id):
+        return self._color_overrides.get(self._color_key(elem_type, elem_id))
+
+    def clear_element_color(self, elem_type, elem_id):
+        self._color_overrides.pop(self._color_key(elem_type, elem_id), None)
+        self.draw_scene()
+
+    def _apply_color_to_item(self, elem_type, elem_id, color):
+        if elem_type == "POINT" and elem_id in self.point_items:
+            self.point_items[elem_id].set_color(color)
+        elif elem_type == "POLYGON" and elem_id in self.polygon_items:
+            self.polygon_items[elem_id].set_color(color)
+        elif elem_type == "FRAME" and elem_id in self.frame_items:
+            self.frame_items[elem_id].set_color(color)
+        elif elem_type == "EDGE" and elem_id in self.edge_items:
+            self.edge_items[elem_id].set_color(color)
+        # LINE: bir sonraki draw_scene'de pen renginde uygulanır
+
+    def _create_point_at_screen_pos(self, screen_pos: QPointF):
+        """
+        Ekran koordinatını 3D dünya koordinatına çevirip yeni nokta oluşturur.
+        Z = 0 düzleminde varsayar.
+        """
+        # Benzersiz isim üret
+        idx = 1
+        while f"P{idx}" in self.points:
+            idx += 1
+        name = f"P{idx}"
+
+        # Ekran → dünya (kaba ters projeksiyon, z=0 düzlemi varsayımıyla)
+        scale = 40 * self.camera.zoom
+        cx = (screen_pos.x() - self.center_x) / scale
+        cy = -(screen_pos.y() - self.center_y) / scale
+        # cy = y2, cx = x2 — camera.project'in tersini almak gerek
+        # Basit yaklaşım: x2, y2'yi ters çevirip Vec3(x, y, 0) kullan
+        # Tam ters projeksiyon:
+        p = self._inverse_project(cx, cy, 0.0)
+
+        self.points[name] = (p.x, p.y, p.z)
+
+        # PointItem oluştur
+        item = PointItem(name)
+        item.clicked.connect(lambda n=name: self.on_point_clicked(n))
+        item.context_menu_requested.connect(lambda n=name: self.show_context_menu("POINT", n))
+        item.visibility_changed.connect(lambda n, v: self._on_visibility_changed("POINT", n, v))
+        self.point_items[name] = item
+        self.scene.addItem(item)
+
+        self.draw_scene()
+        logging.info(f"Created point {name} at {self.points[name]}")
+
+
+    def _inverse_project(self, x2, y2, z=0.0):
+        """
+        Camera3D.project'in kabaca tersini alır.
+        camera.project:
+            x1 = p.x*sin(yaw) + p.y*cos(yaw)
+            y1 = -p.x*cos(yaw) + p.y*sin(yaw)
+            x2 = -x1
+            y2 = p.z*cos(pitch) - y1*sin(pitch)
+            z2 = p.z*sin(pitch) + y1*cos(pitch)
+        """
+        yaw = self.camera.yaw
+        pitch = self.camera.pitch
+
+        # x2 = -x1 → x1 = -x2
+        x1 = -x2
+        # y2 = z*cos(pitch) - y1*sin(pitch) → y1 = (z*cos(pitch) - y2) / sin(pitch)
+        sp = math.sin(pitch)
+        cp = math.cos(pitch)
+        if abs(sp) < 1e-6:
+            # pitch ~0, düzlem çakışıyor, güvenli varsayım
+            y1 = 0.0
+        else:
+            y1 = (z * cp - y2) / sp
+
+        # x1, y1 → p.x, p.y
+        sy = math.sin(yaw)
+        cy_ = math.cos(yaw)
+        # x1 =  x*sy + y*cy
+        # y1 = -x*cy + y*sy
+        # Çöz:
+        # [ sy  cy ] [x]   [x1]
+        # [-cy  sy ] [y] = [y1]
+        # det = sy*sy + cy*cy = 1
+        px = x1 * sy - y1 * cy_
+        py = x1 * cy_ + y1 * sy
+
+        return Vec3(px, py, z)
+    
+
+    def _on_polygon_created(self, point_names):
+        idx = 1
+        while f"POLY{idx}" in self.polygons:
+            idx += 1
+        name = f"POLY{idx}"
+        self.polygons[name] = list(point_names)
+        self.draw_scene()
+        logging.info(f"Polygon {name} created from {point_names}")
+
+    def get_element_data(self, elem_type, elem_id):
+        """Seçili öğenin verisini sözlük olarak döndürür."""
+        if elem_type == "POINT" and elem_id in self.points:
+            coords = self.points[elem_id]
+            return {
+                "Tür": "Nokta", "ID": elem_id,
+                "X": coords[0], "Y": coords[1], "Z": coords[2],
+            }
+        if elem_type == "POLYGON" and elem_id in self.polygons:
+            pts = self.polygons[elem_id]
+            return {
+                "Tür": "Poligon", "ID": elem_id,
+                "Nokta Sayısı": len(pts),
+                "Noktalar": ", ".join(pts),
+            }
+        if elem_type == "FRAME" and elem_id in self.frames:
+            p1, p2 = self.frames[elem_id]
+            return {
+                "Tür": "Frame", "ID": elem_id,
+                "Başlangıç": p1, "Bitiş": p2,
+            }
+        if elem_type == "EDGE" and elem_id in self.edge_items:
+            e = self.edge_items[elem_id]
+            return {
+                "Tür": "Kenar", "ID": elem_id,
+                "Nokta1": e.p1_name, "Nokta2": e.p2_name,
+                "Bağlı Poligonlar": ", ".join(e.parent_polygons) if e.parent_polygons else "Yok",
+            }
+        if elem_type == "LINE":
+            idx = None
+            if isinstance(elem_id, str) and elem_id.startswith("line_"):
+                try:
+                    idx = int(elem_id.split("_", 1)[1])
+                except ValueError:
+                    idx = None
+            if idx is not None and 0 <= idx < len(self.lines):
+                pts = self.lines[idx]
+                return {
+                    "Tür": "Line", "ID": elem_id,
+                    "Nokta Sayısı": len(pts),
+                    "Noktalar": ", ".join(str(p) for p in pts),
+                }
+        return None
+        
+if __name__ == "__main__":
+    import sys
+    from PySide6.QtWidgets import QApplication
+
+    app = QApplication(sys.argv)
+
+    points = {
+        "P1": (0, 0, 0),
+        "P2": (5000, 0, 0),
+        "P3": (5000, 4000, 0),
+        "P4": (0, 4000, 0),
+        "P5": (0, 0, 3000),
+    }
+
+    polygons = {
+        "POLY1": ["P1", "P2", "P3", "P4"],
+        "POLY2": ["P1", "P2", "P5"],
+    }
+    
+    frames = {
+        "F1": ["P1", "P2"],
+        "F2": ["P3", "P5"],
+    }
+    
+    render_lines= [[[0.0, 0.0, 0.0], [12000.0, 0.0, 0.0]], [[12000.0, 0.0, 0.0], [12000.0, 8000.0, 0.0]], [[12000.0, 8000.0, 0.0], [0.0, 8000.0, 0.0]], [[0.0, 8000.0, 0.0], [0.0, 0.0, 0.0]], [[6000.0, -4200.0, 0.0], [6000.0, 0.0, 0.0]], [[6000.0, 0.0, 0.0], [6630.0, -1050.0, 0.0]], [[6000.0, 0.0, 0.0], [5370.0, -1050.0, 0.0]], [[5496.0, -4956.0, 0.0], [5748.0, -5460.0, 0.0]], [[5748.0, -5460.0, 0.0], [6000.0, -4956.0, 0.0]], [[6000.0, -4956.0, 0.0], [6252.0, -5460.0, 0.0]], [[6252.0, -5460.0, 0.0], [6504.0, -4956.0, 0.0]]]
+    
+    view = View3D()
+    
+    view.set_data(points= points, polygons=polygons, lines=render_lines, frames=frames)
+
+    view.resize(1000, 700)
+    view.show()
+    view.zoom_extents()
+    
+    print(view.lines)
+
+    sys.exit(app.exec())

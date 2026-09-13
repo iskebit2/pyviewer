@@ -451,7 +451,7 @@ class WindPlane:
         
         # print("debug:","analysis_","wind_relation",self.properties["wind_relation"])
         self.properties["wind_vector"] = w
-        
+        self.compute_surface_topological_properties(building.surfaces_items.values())
         if self.surface_type.value == "WALL":
             self.properties["regions"] = self.calculate_wall_cpe_from_polygon(
                 w,

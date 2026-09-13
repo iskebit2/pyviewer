@@ -57,6 +57,50 @@ class ClickableGraphicsItem(QGraphicsObject):
         self.setFlag(QGraphicsItem.ItemIsSelectable, True)
         self.setVisible(True)
 
+        self._colors = {
+            "normal":   QColor("#2196f3"),   # normal durum
+            "hover":    QColor("#00bcd4"),   # hover
+            "selected": QColor("#e91e63"),   # seçili
+            "hidden":   QColor("#9e9e9e"),   # gizli
+            "border":   QColor("#0d47a1"),   # kenar çizgisi
+        }
+
+        self._color_override = None
+    def set_color(self, color):
+        """Ana rengi override et. QColor, hex string veya tuple kabul eder."""
+        self._color_override = QColor(color)
+        self.update()
+
+    def set_default_colors(self, normal=None, hover=None, selected=None,
+                           hidden=None, border=None):
+        """Alt sınıflar kendi varsayılan paletlerini buradan atar."""
+        if normal   is not None: self._colors["normal"]   = QColor(normal)
+        if hover    is not None: self._colors["hover"]    = QColor(hover)
+        if selected is not None: self._colors["selected"] = QColor(selected)
+        if hidden   is not None: self._colors["hidden"]   = QColor(hidden)
+        if border   is not None: self._colors["border"]   = QColor(border)
+        self.update()
+
+    def color(self):
+        """Aktif ana rengi döndür (override varsa onu)."""
+        return self._color_override or self._colors["normal"]
+
+    def clear_color_override(self):
+        self._color_override = None
+        self.update()
+
+    def get_active_color(self, hovered=False, selected=False):
+        """Duruma göre aktif rengi döndür (override öncelikli)."""
+        if not self._is_visible:
+            return self._colors["hidden"]
+        if self._color_override is not None:
+            return self._color_override
+        if selected:
+            return self._colors["selected"]
+        if hovered:
+            return self._colors["hover"]
+        return self._colors["normal"]
+    
     def set_visible(self, visible):
         """Görünürlüğü ayarla"""
         if self._is_visible != visible:
@@ -86,25 +130,16 @@ class ClickableGraphicsItem(QGraphicsObject):
         super().mousePressEvent(event)
 
     def safe_ungrab(self):
-        """Güvenli ungrabMouse"""
-        if not self._is_deleted and self.scene() and self.scene().views():
-            try:
-                if self.grabber():
-                    self.ungrabMouse()
-            except RuntimeError:
-                pass
-    
+        """Qt grab'ı removeItem sırasında otomatik bırakır."""
+        pass
+
     def safe_remove(self):
-        """Güvenli şekilde sahneden kaldır"""
-        if not self._is_deleted:
-            self._is_deleted = True
-            self.safe_ungrab()
-            if self.scene():
-                self.scene().removeItem(self)
-
-
-# domains.py - AxisItem (Çok basit versiyon)
-
+        if self._is_deleted:
+            return
+        self._is_deleted = True
+        if self.scene():
+            self.scene().removeItem(self)
+            
 class AxisItem(QGraphicsObject):
     """3D eksenleri gösteren grafik öğesi - Sabit boyut, 3D rotasyonlu"""
     
@@ -226,6 +261,12 @@ class PointItem(ClickableGraphicsItem):
 
         self.setZValue(200)
 
+        # Varsayılan palet
+        self.set_default_colors(
+            normal="#2196f3", hover="#00bcd4",
+            selected="#e91e63", hidden="#9e9e9e", border="#0d47a1"
+        )
+
         self.label = QGraphicsTextItem(name, self)
         self.label.setDefaultTextColor(QColor("#222222"))
         self.label.setFont(QFont("Arial", 8, QFont.Weight.Bold))
@@ -251,21 +292,14 @@ class PointItem(ClickableGraphicsItem):
 
     def paint(self, painter, option, widget=None):
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-        
-        if self._is_selected:
-            brush_color = QColor("#e91e63")
-            pen_color = QColor("#880e4f")
-        elif self._is_hovered:
-            brush_color = QColor("#00bcd4")
-            pen_color = QColor("#006064")
-        else:
-            brush_color = QColor("#2196f3")
-            pen_color = QColor("#0d47a1")
+
+        brush_color = self.get_active_color(self._is_hovered, self._is_selected)
+        border = self._colors["border"] if self._color_override is None else brush_color.darker(150)
 
         painter.setBrush(QBrush(brush_color))
-        painter.setPen(QPen(pen_color, 3 if (self._is_selected or self._is_hovered) else 2))
-        painter.drawEllipse(QRectF(-self.radius, -self.radius, self.radius * 2, self.radius * 2))
-
+        painter.setPen(QPen(border, 3 if (self._is_selected or self._is_hovered) else 2))
+        painter.drawEllipse(QRectF(-self.radius, -self.radius,
+                                   self.radius * 2, self.radius * 2))
 
 
 
@@ -285,6 +319,11 @@ class EdgeItem(ClickableGraphicsItem):
         self._is_hovered = False
         self.setAcceptHoverEvents(True)
         self.setZValue(150)
+
+        self.set_default_colors(
+            normal="#ff9800", hover="#ffc107",
+            selected="#e91e63", hidden="#9e9e9e"
+        )
 
     def set_line(self, p1: QPointF, p2: QPointF):
         self.prepareGeometryChange()
@@ -319,19 +358,14 @@ class EdgeItem(ClickableGraphicsItem):
 
     def paint(self, painter, option, widget=None):
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-        
-        if self._is_selected:
-            pen = QPen(QColor("#e91e63"), 4)
-        elif self._is_hovered:
-            pen = QPen(QColor("#ffc107"), 4)
-        else:
-            # Poligon sayısına göre renk değiştir
-            if len(self.parent_polygons) > 1:
-                pen = QPen(QColor("#9c27b0"), 3)  # Mor - paylaşılan kenar
-            else:
-                pen = QPen(QColor("#ff9800"), 3)  # Turuncu - tek poligon
+        col = self.get_active_color(self._is_hovered, self._is_selected)
 
-        painter.setPen(pen)
+        # Override yoksa paylaşılan kenar rengini kullan
+        if self._color_override is None and len(self.parent_polygons) > 1 \
+                and not self._is_selected and not self._is_hovered:
+            col = QColor("#9c27b0")
+
+        painter.setPen(QPen(col, 3))
         painter.drawLine(self.p1_pos, self.p2_pos)
         
         # Paylaşılan kenar olduğunu belirten küçük gösterge
@@ -363,6 +397,38 @@ class PolygonItem(ClickableGraphicsItem):
         self._is_selected = False
         self._is_hovered = False
         self.depth = 0
+
+        # Poligon için dolgu renkleri alpha ile
+        self._fill_normal   = QColor(123, 31, 162, 40)
+        self._fill_hover    = QColor(171, 71, 188, 70)
+        self._fill_selected = QColor(233, 30, 99, 100)
+
+        self.set_default_colors(
+            normal="#7b1fa2", hover="#ab47bc",
+            selected="#e91e63", hidden="#9e9e9e", border="#7b1fa2"
+        )
+
+    def set_color(self, color):
+        """Dolgu rengini override et (alpha korunur)."""
+        c = QColor(color)
+        c.setAlpha(self._fill_normal.alpha())
+        self._color_override = c
+        self.update()
+
+    def set_border_color(self, color):
+        self._colors["border"] = QColor(color)
+        self.update()
+
+    def get_fill_color(self):
+        if not self._is_visible:
+            return QColor(158, 158, 158, 40)
+        if self._color_override is not None:
+            return self._color_override
+        if self._is_selected:
+            return self._fill_selected
+        if self._is_hovered:
+            return self._fill_hover
+        return self._fill_normal
 
     def set_polygon(self, qpolygon: QPolygonF, depth: float):
         self.prepareGeometryChange()
@@ -396,19 +462,12 @@ class PolygonItem(ClickableGraphicsItem):
         if self.screen_polygon.isEmpty():
             return
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-        
-        if self._is_selected:
-            pen = QPen(QColor("#e91e63"), 2)
-            brush = QBrush(QColor(233, 30, 99, 100))
-        elif self._is_hovered:
-            pen = QPen(QColor("#ab47bc"), 2)
-            brush = QBrush(QColor(171, 71, 188, 70))
-        else:
-            pen = QPen(QColor("#7b1fa2"), 2)
-            brush = QBrush(QColor(123, 31, 162, 40))
 
-        painter.setPen(pen)
-        painter.setBrush(brush)
+        fill = self.get_fill_color()
+        border = self.get_active_color(self._is_hovered, self._is_selected)
+
+        painter.setPen(QPen(border, 2))
+        painter.setBrush(QBrush(fill))
         painter.drawPolygon(self.screen_polygon)
 
 
@@ -422,6 +481,12 @@ class FrameItem(ClickableGraphicsItem):
         self._is_selected = False
         self._is_hovered = False
         self.setZValue(175)
+
+        self.set_default_colors(
+            normal="#1565c0", hover="#4fc3f7",
+            selected="#e91e63", hidden="#9e9e9e"
+        )
+
 
     def set_line(self, p1: QPointF, p2: QPointF):
         self.prepareGeometryChange()
@@ -456,14 +521,8 @@ class FrameItem(ClickableGraphicsItem):
 
     def paint(self, painter, option, widget=None):
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-        
-        if self._is_selected:
-            pen = QPen(QColor("#e91e63"), 4)
-        elif self._is_hovered:
-            pen = QPen(QColor("#4fc3f7"), 4)
-        else:
-            pen = QPen(QColor("#1565c0"), 3)
-
+        col = self.get_active_color(self._is_hovered, self._is_selected)
+        pen = QPen(col, 4 if (self._is_selected or self._is_hovered) else 3)
         painter.setPen(pen)
         painter.drawLine(self.p1_pos, self.p2_pos)
 
@@ -669,10 +728,9 @@ class ElementPropertiesDialog(QDialog):
         super().accept()
 
 
-# ShowObjectsDialog - Düzeltilmiş versiyon
 class ShowObjectsDialog(QDialog):
     visibility_changed = Signal(str, str, bool)
-    
+
     def __init__(self, view3d, parent=None):
         super().__init__(parent)
         self.view3d = view3d
@@ -680,17 +738,18 @@ class ShowObjectsDialog(QDialog):
         self.setModal(False)
         self.resize(400, 500)
         self.setMinimumSize(300, 400)
-        
+
         self.setup_ui()
         self.load_data()
-        
+
+    # ------------------------------------------------------------------ UI
     def setup_ui(self):
         layout = QVBoxLayout(self)
-        
+
         title_label = QLabel("<h3>Görünürlük Kontrolleri</h3>")
         title_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         layout.addWidget(title_label)
-        
+
         self.tree = QTreeWidget()
         self.tree.setHeaderLabels(["Öğe Tipi", "ID", "Görünür"])
         self.tree.header().setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
@@ -698,19 +757,19 @@ class ShowObjectsDialog(QDialog):
         self.tree.header().setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)
         self.tree.setIndentation(20)
         layout.addWidget(self.tree)
-        
+
         button_layout = QHBoxLayout()
-        
+
         show_all_btn = QPushButton("Tümünü Göster")
         show_all_btn.clicked.connect(self.show_all)
         button_layout.addWidget(show_all_btn)
-        
+
         hide_all_btn = QPushButton("Tümünü Gizle")
         hide_all_btn.clicked.connect(self.hide_all)
         button_layout.addWidget(hide_all_btn)
-        
+
         layout.addLayout(button_layout)
-        
+
         type_layout = QHBoxLayout()
         types = ["POINT", "POLYGON", "EDGE", "FRAME", "LINE"]
         type_labels = {
@@ -720,158 +779,183 @@ class ShowObjectsDialog(QDialog):
             "FRAME": "🟠 Frame'ler",
             "LINE": "🟣 Line'lar"
         }
-        
+
         for elem_type in types:
             btn = QPushButton(type_labels.get(elem_type, elem_type))
             btn.setProperty("type", elem_type)
             btn.clicked.connect(lambda checked, t=elem_type: self.toggle_type_visibility(t))
             btn.setMaximumWidth(100)
             type_layout.addWidget(btn)
-        
+
         layout.addLayout(type_layout)
-        
+
         close_btn = QPushButton("Kapat")
         close_btn.clicked.connect(self.accept)
         layout.addWidget(close_btn)
-        
-    
 
+    # ------------------------------------------------------------- helpers
+    def _get_type_items(self, elem_type):
+        """
+        (item_id, item_or_None) çiftlerinin listesini döndürür.
+        LINE için item her zaman None'dır (tıklanamaz graphics item).
+        """
+        if elem_type == "POINT":
+            return list(self.view3d.point_items.items())
+        if elem_type == "POLYGON":
+            return list(self.view3d.polygon_items.items())
+        if elem_type == "FRAME":
+            return list(self.view3d.frame_items.items())
+        if elem_type == "EDGE":
+            return list(self.view3d.edge_items.items())
+        if elem_type == "LINE":
+            # self.view3d.lines bir liste; her eleman bir polyline
+            return [(f"line_{i}", None) for i in range(len(self.view3d.lines))]
+        return []
+
+    def _item_is_visible(self, elem_type, item_id):
+        """Tek merkezden görünürlük okuma."""
+        if elem_type == "LINE":
+            return self.view3d.get_visibility("LINE", item_id)
+        # Diğerleri için graphics item varsa ondan, yoksa state'ten
+        item = None
+        if elem_type == "POINT":
+            item = self.view3d.point_items.get(item_id)
+        elif elem_type == "POLYGON":
+            item = self.view3d.polygon_items.get(item_id)
+        elif elem_type == "FRAME":
+            item = self.view3d.frame_items.get(item_id)
+        elif elem_type == "EDGE":
+            item = self.view3d.edge_items.get(item_id)
+        if item is not None and hasattr(item, "is_visible"):
+            return item.is_visible()
+        return self.view3d.get_visibility(elem_type, item_id)
+
+    def _apply_visibility(self, elem_type, item_id, visible):
+        """
+        Görünürlüğü uygula. LINE için sadece state'i günceller ve sahneyi yeniden çizer.
+        Diğerleri için hem graphics item'a hem state'e uygular.
+        """
+        if elem_type == "LINE":
+            self.view3d.set_visibility("LINE", item_id, visible)
+            self.view3d.draw_scene()
+            return
+
+        # POINT / POLYGON / FRAME / EDGE
+        item_dict = {
+            "POINT": self.view3d.point_items,
+            "POLYGON": self.view3d.polygon_items,
+            "FRAME": self.view3d.frame_items,
+            "EDGE": self.view3d.edge_items,
+        }[elem_type]
+
+        item = item_dict.get(item_id)
+        if item is not None and hasattr(item, "set_visible"):
+            item.set_visible(visible)   # item kendi state'ini + görünürlüğünü ayarlar
+        else:
+            # Graphics item yoksa state'i yine de güncelle
+            self.view3d.set_visibility(elem_type, item_id, visible)
+
+    # ------------------------------------------------------------ load data
     def load_data(self):
         """Mevcut verileri ağaca yükle"""
         self.tree.clear()
-        
-        categories = {
-            "POINT": ("Noktalar", self.view3d.point_items),
-            "POLYGON": ("Poligonlar", self.view3d.polygon_items),
-            "FRAME": ("Frame'ler", self.view3d.frame_items),
-            "LINE": ("Line'lar", self.view3d.line_items),
-            "EDGE": ("Kenarlar", self.view3d.edge_items)
-        }
-        
-        for elem_type, (label, items) in categories.items():
+
+        categories = [
+            ("POINT",   "Noktalar"),
+            ("POLYGON", "Poligonlar"),
+            ("FRAME",   "Frame'ler"),
+            ("EDGE",    "Kenarlar"),
+            ("LINE",    "Line'lar"),
+        ]
+
+        for elem_type, label in categories:
+            items = self._get_type_items(elem_type)
             if not items:
                 continue
-                
+
             category_item = QTreeWidgetItem(self.tree)
             category_item.setText(0, label)
             category_item.setText(1, f"({len(items)} öğe)")
             category_item.setText(2, "")
-            
+
             font = category_item.font(0)
             font.setBold(True)
             category_item.setFont(0, font)
-            
-            for item_id, item in items.items():
+
+            for item_id, _item in items:
                 child = QTreeWidgetItem(category_item)
                 child.setText(0, "")
                 child.setText(1, item_id)
-                
+
                 check_widget = QWidget()
                 check_layout = QHBoxLayout(check_widget)
                 check_layout.setContentsMargins(0, 0, 0, 0)
                 check_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
-                
+
                 checkbox = QCheckBox()
-                # Görünürlük durumunu View3D'den al
-                is_visible = self.view3d.get_visibility(elem_type, item_id)
+                is_visible = self._item_is_visible(elem_type, item_id)
                 checkbox.setChecked(is_visible)
                 checkbox.stateChanged.connect(
                     lambda state, t=elem_type, i=item_id: self.on_visibility_changed(t, i, state)
                 )
                 check_layout.addWidget(checkbox)
-                
+
                 self.tree.setItemWidget(child, 2, check_widget)
                 child.setData(0, Qt.ItemDataRole.UserRole, (elem_type, item_id))
-            
+
             category_item.setExpanded(True)
-    
+
+    # --------------------------------------------------------- visibility
     def on_visibility_changed(self, elem_type, item_id, state):
         is_visible = state == Qt.CheckState.Checked.value
         self.visibility_changed.emit(elem_type, item_id, is_visible)
-        
-        if elem_type == "POINT" and item_id in self.view3d.point_items:
-            self.view3d.point_items[item_id].set_visible(is_visible)
-        elif elem_type == "POLYGON" and item_id in self.view3d.polygon_items:
-            self.view3d.polygon_items[item_id].set_visible(is_visible)
-        elif elem_type == "FRAME" and item_id in self.view3d.frame_items:
-            self.view3d.frame_items[item_id].set_visible(is_visible)
-        elif elem_type == "LINE" and item_id in self.view3d.line_items:
-            self.view3d.line_items[item_id].set_visible(is_visible)
-        elif elem_type == "EDGE" and item_id in self.view3d.edge_items:
-            self.view3d.edge_items[item_id].set_visible(is_visible)
-    
+        self._apply_visibility(elem_type, item_id, is_visible)
+
     def toggle_type_visibility(self, elem_type):
-        items = []
-        if elem_type == "POINT":
-            items = list(self.view3d.point_items.items())
-        elif elem_type == "POLYGON":
-            items = list(self.view3d.polygon_items.items())
-        elif elem_type == "FRAME":
-            items = list(self.view3d.frame_items.items())
-        elif elem_type == "LINE":
-            items = list(self.view3d.line_items.items())
-        elif elem_type == "EDGE":
-            items = list(self.view3d.edge_items.items())
-        
+        items = self._get_type_items(elem_type)
         if not items:
             return
-            
-        all_visible = all(item.is_visible() if hasattr(item, 'is_visible') else True for _, item in items)
+
+        # Tümü görünürse -> hepsini gizle, aksi halde hepsini göster
+        all_visible = all(self._item_is_visible(elem_type, item_id) for item_id, _ in items)
         new_state = not all_visible
-        
-        for item_id, item in items:
-            if hasattr(item, 'set_visible'):
-                item.set_visible(new_state)
-                self.visibility_changed.emit(elem_type, item_id, new_state)
-        
+
+        for item_id, _ in items:
+            self._apply_visibility(elem_type, item_id, new_state)
+            self.visibility_changed.emit(elem_type, item_id, new_state)
+
         self.update_tree()
-    
+
     def show_all(self):
         self._set_all_visibility(True)
-    
+
     def hide_all(self):
         self._set_all_visibility(False)
-    
+
     def _set_all_visibility(self, visible):
-        all_items = [
-            (self.view3d.point_items, "POINT"),
-            (self.view3d.polygon_items, "POLYGON"),
-            (self.view3d.frame_items, "FRAME"),
-            (self.view3d.line_items, "LINE"),
-            (self.view3d.edge_items, "EDGE")
-        ]
-        
-        for items, elem_type in all_items:
-            for item_id, item in items.items():
-                if hasattr(item, 'set_visible'):
-                    item.set_visible(visible)
-                    self.visibility_changed.emit(elem_type, item_id, visible)
-        
+        for elem_type in ["POINT", "POLYGON", "FRAME", "EDGE", "LINE"]:
+            for item_id, _ in self._get_type_items(elem_type):
+                self._apply_visibility(elem_type, item_id, visible)
+                self.visibility_changed.emit(elem_type, item_id, visible)
+
         self.update_tree()
-    
+
+    # -------------------------------------------------------------- refresh
     def update_tree(self):
         for i in range(self.tree.topLevelItemCount()):
             category = self.tree.topLevelItem(i)
             for j in range(category.childCount()):
                 child = category.child(j)
                 widget = self.tree.itemWidget(child, 2)
-                if widget:
-                    checkbox = widget.findChild(QCheckBox)
-                    if checkbox:
-                        data = child.data(0, Qt.ItemDataRole.UserRole)
-                        if data:
-                            elem_type, item_id = data
-                            item = None
-                            if elem_type == "POINT" and item_id in self.view3d.point_items:
-                                item = self.view3d.point_items[item_id]
-                            elif elem_type == "POLYGON" and item_id in self.view3d.polygon_items:
-                                item = self.view3d.polygon_items[item_id]
-                            elif elem_type == "FRAME" and item_id in self.view3d.frame_items:
-                                item = self.view3d.frame_items[item_id]
-                            elif elem_type == "LINE" and item_id in self.view3d.line_items:
-                                item = self.view3d.line_items[item_id]
-                            elif elem_type == "EDGE" and item_id in self.view3d.edge_items:
-                                item = self.view3d.edge_items[item_id]
-                            
-                            if item and hasattr(item, 'is_visible'):
-                                checkbox.setChecked(item.is_visible())
+                if not widget:
+                    continue
+                checkbox = widget.findChild(QCheckBox)
+                if not checkbox:
+                    continue
+                data = child.data(0, Qt.ItemDataRole.UserRole)
+                if not data:
+                    continue
+                elem_type, item_id = data
+                checkbox.blockSignals(True)
+                checkbox.setChecked(self._item_is_visible(elem_type, item_id))
+                checkbox.blockSignals(False)

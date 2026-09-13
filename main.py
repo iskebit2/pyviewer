@@ -11,9 +11,12 @@ from PySide6.QtWidgets import (
 from PySide6.QtCore import Qt
 
 from canvas3d import View3D
-from windplane import SurfaceType, WindPlane, BuildingWindEngine
+
+from windcalc.windengine import BuildingWindEngine
+from windcalc.windplane import WindPlane
 from menu_bar import MenuBar
 from button_bar import ButtonBar
+from ui.data_dialog import DataDialog
 
 logging.basicConfig(level=logging.DEBUG, format="%(levelname)s - %(message)s")
 
@@ -101,6 +104,7 @@ class MainWindow(QMainWindow):
             {"text": "⚙️ Parameters", "callback": self.set_wind_parameters, "tooltip": "Rüzgar parametreleri"},
             {"text": "🏗️ Building", "callback": self.building_wind_calc, "tooltip": "Bina yükü hesapla"},
             {"text": "📊 Analysis", "callback": self.analyze_selected, "tooltip": "Analiz yap", "enabled": False},
+            {"text": "Item", "callback": self.item_selected, "tooltip": "Seçim nesnesini incele", "enabled": False},
         ]
 
         self.buttonbar = ButtonBar(self, buttons)
@@ -150,7 +154,23 @@ class MainWindow(QMainWindow):
 
         self.buttonbar.set_enabled("📐 get_from_points", point_count == 2)
 
-        
+    def item_selected(self):
+        selected_type = self.view3d.selected_type
+        selected_id = self.view3d.selected_id
+
+        if not selected_type or not selected_id:
+            logging.warning("Lütfen bir öğe seçin!")
+            return
+
+        data = self.view3d.get_element_data(selected_type, selected_id)
+        if not data:
+            logging.warning(f"{selected_type} '{selected_id}' verisi bulunamadı!")
+            return
+
+        self.show_data(data, f"{selected_type} Parameters - {selected_id}")
+           
+        logging.info("{selected_type} Parameters... {selected_id}")
+            
 
     # ==================== RÜZGAR ANALİZİ ====================
 
@@ -184,7 +204,9 @@ class MainWindow(QMainWindow):
 
             plane = WindPlane(coords, name=selected_id)
             plane.analysis_(self.wind_vector, self.building)
-            info = dict_tree(plane.results)
+            self.show_data(plane.edges, "Edge Parameters")
+            info = dict_tree(plane.properties)
+            # show_data(plane.properties, "Surface Parameters", self)
 
             logging.info("Surface Wind Analysis...\n"+info)
             
@@ -336,7 +358,22 @@ class MainWindow(QMainWindow):
 
     def get_from_points(self):
         """Ana butondan get_from_points çağrısı"""
-        vec = self._calculate_perpendicular_vector()
+        p1_selected,p2_selected,vec = self._calculate_perpendicular_vector()
+
+        if self.building:
+            geom_results = self.building.calculate_obb_and_geometry(p1_selected, p2_selected, self.building.raw_points)
+            render_lines = self.building.generate_render_lines(geom_results)
+
+            # if not isinstance(self.view3d.lines, list):
+            #     # Eğer dict geldiyse, değerlerine çevir
+            #     if isinstance(self.view3d.lines, dict):
+            #         self.view3d.lines = list(self.view3d.lines.values())
+            #     else:
+            #         self.view3d.lines = []
+            
+            self.view3d.lines= render_lines
+            self.view3d.draw_scene()
+            
         if vec is not None:
             self.wind_vector = vec
             logging.info(f"📐 Dik vektör: {vec}")
@@ -367,7 +404,7 @@ class MainWindow(QMainWindow):
 
         perp = perp / norm
         logging.info(f"Dik vektör hesaplandı: {perp}")
-        return perp
+        return p1,p2,perp
 
     # ==================== BİNA İŞLEMLERİ ====================
 
@@ -439,10 +476,18 @@ class MainWindow(QMainWindow):
 
     def handle_selection(self, elem_type: str, elem_id: str, data: Any):
         """Seçim işlemini handle eder"""
+        if elem_type in ["POLYGON", "FRAME", "POINT", "EDGE"]:
+            self.buttonbar.set_enabled("Item", True)
+        else:
+            self.buttonbar.set_enabled("Item", False)
+
+
         if elem_type =="POLYGON":
             self.buttonbar.set_enabled("📊 Analysis", True)
+            
         else:
             self.buttonbar.set_enabled("📊 Analysis", False)
+            
 
 
         if elem_type == "EDGE" and isinstance(data, dict):
@@ -493,6 +538,17 @@ class MainWindow(QMainWindow):
         except Exception as e:
             logging.warning(f"Cleanup error: {e}")
         event.accept()
+
+    def show_data(self, data, title= "Data"):
+        
+        self.data_dialog = DataDialog(
+                                data,
+                                title= title,
+                                parent=self
+                            )
+
+        self.data_dialog.setModal(False)
+        self.data_dialog.show()
 
 
 if __name__ == "__main__":
