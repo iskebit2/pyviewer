@@ -59,8 +59,11 @@ class BuildingWindEngine:
             for name, pt in self.raw_points.items()
         }
 
-    def _analyze_surfaces(self) -> Dict[str, Dict[str, Any]]:
+    def _analyze_surfaces(self, w= None) -> Dict[str, Dict[str, Any]]:
         """Poligon bağımsız yüzey tipini ve kotlarını çıkarır."""
+        if w is None:
+            w = self.w_dir
+
         surfaces = {}
         self.surfaces_items= {}
         self.all_roof_polygons = {}
@@ -161,75 +164,129 @@ class BuildingWindEngine:
         return np.array(coords)
 
     def analysis_all_roof_wind(self, w):
-        w = np.array(w, dtype=float)
+        w = np.asarray(w, dtype=float)
+
         w_len = np.linalg.norm(w)
+
         if w_len < 1e-12:
             return
+
         w_norm = w / w_len
 
-        roof_surfaces = {}
-        for surface_name, surface in self.surfaces_items.items():
-            if getattr(surface.surface_type, "value", surface.surface_type) == "ROOF":
-                surface.analysis_(w, self)
-                surface.global_leading = False
-                surface.properties["global_leading"] = False
-                roof_surfaces[surface_name] = surface
-                # print("debug:","analysis_all_roof_wind","wind_relation",surface.properties["wind_relation"])
-        if not roof_surfaces:
-            return
+        # ------------------------------------------------------------
+        # 1. FAZ
+        # Bütün yüzeylerin lokal analizini tamamla.
+        # ------------------------------------------------------------
 
-        # 1. Aşama: Bütün binalardaki exposed kenarların EN ÖN noktalarını kıyasla,
-        # küresel rüzgarüstü sınır koordinatını (min_global_pos) bul.
-        global_min_pos = float("inf")
-        
-        for surface in roof_surfaces.values():
+        self._analyze_surfaces(w)
+
+        roof_surfaces = {}
+
+        for surface_name, surface in self.surfaces_items.items():
+
+            surface.analysis_(w, self)
+
+            surface.global_leading = False
+            surface.properties["global_leading"] = False
+
+            if getattr(
+                surface.surface_type,
+                "value",
+                surface.surface_type
+            ) == "ROOF":
+
+                roof_surfaces[surface_name] = surface
+
+        if not roof_surfaces:
+            return self.surfaces_items
+
+        # ------------------------------------------------------------
+        # 2. FAZ
+        # Lokal leading kenarları artık bütün yüzeyler arasında
+        # karşılaştır.
+        # ------------------------------------------------------------
+
+        leading_edges = []
+
+        for surface_name, surface in roof_surfaces.items():
+
             for edge in surface.edges.values():
+
                 if not edge.exposed:
                     continue
-                
-                p1_pos = np.dot(np.array(edge.p1), w_norm)
-                p2_pos = np.dot(np.array(edge.p2), w_norm)
-                
-                # Senin metodun: Sıralı liste [ön_nokta, arka_nokta]
-                front_positions = sorted([p1_pos, p2_pos])  # min değer rüzgarda en öndedir
-                
-                if front_positions[0] < global_min_pos:
-                    global_min_pos = front_positions[0]
+
+                if not edge.leading:
+                    continue
+
+                p1 = np.asarray(edge.p1, dtype=float)
+                p2 = np.asarray(edge.p2, dtype=float)
+
+                p1_pos = float(np.dot(p1, w_norm))
+                p2_pos = float(np.dot(p2, w_norm))
+
+                front_pos = min(p1_pos, p2_pos)
+                back_pos = max(p1_pos, p2_pos)
+
+                leading_edges.append(
+                    (
+                        surface_name,
+                        surface,
+                        edge,
+                        front_pos,
+                        back_pos,
+                    )
+                )
+
+        if not leading_edges:
+            return self.surfaces_items
+
+        # ------------------------------------------------------------
+        # 3. FAZ
+        # Lokal leading kenarların en öndeki konumunu bul.
+        #
+        # Rüzgar w yönünde ilerlediği için "ilk karşılaşılan" nokta
+        # en küçük projeksiyondur.
+        # ------------------------------------------------------------
+
+        global_front = min(
+            item[3]
+            for item in leading_edges
+        )
 
         tol = 1e-4
 
-        # 2. Aşama: Hem front_positions[0] hem de front_positions[1] aynı anda
-        # en ön hizada olan kenarı barındıran yüzeyi global_leading yap.
-        for surface_name, surface in roof_surfaces.items():
-            is_leading = False
-            
-            for edge in surface.edges.values():
-                if not edge.exposed:
-                    continue
+        # ------------------------------------------------------------
+        # 4. FAZ
+        # Lokal leading kenarlardan hangisi GLOBAL hücum kenarı?
+        #
+        # Bir kenarın yalnızca bir ucunun global hatta değmesi yeterli
+        # değildir. Kenarın tamamı global ön hatta bulunmalıdır.
+        # ------------------------------------------------------------
 
-                p1_pos = np.dot(np.array(edge.p1), w_norm)
-                p2_pos = np.dot(np.array(edge.p2), w_norm)
-                
-                # front_positions[0]: en ön nokta, front_positions[1]: en arka nokta
-                front_positions = sorted([p1_pos, p2_pos])
+        for (
+            surface_name,
+            surface,
+            edge,
+            front_pos,
+            back_pos,
+        ) in leading_edges:
 
-                # ŞART: Kenarın SADECE ilk ucu değil, İKİNCİ UCU da (front_positions[1]) 
-                # en ön hatta mı? (Yani kenar boydan boya ön cephede mi?)
-                is_full_edge_at_front = (
-                    abs(front_positions[0] - global_min_pos) <= tol and
-                    abs(front_positions[1] - global_min_pos) <= tol
+            if (
+                abs(front_pos - global_front) <= tol
+                and
+                abs(back_pos - global_front) <= tol
+            ):
+                edge_len = np.linalg.norm(
+                    np.asarray(edge.p2, dtype=float)
+                    -
+                    np.asarray(edge.p1, dtype=float)
                 )
 
-                if is_full_edge_at_front:
-                    # Nokta temaslarını elemek için kenar boyu kontrolü
-                    edge_len = np.linalg.norm(np.array(edge.p2) - np.array(edge.p1))
-                    if edge_len > 1e-2:
-                        is_leading = True
-                        break
+                if edge_len > 1e-2:
+                    surface.global_leading = True
+                    surface.properties["global_leading"] = True
 
-            if is_leading:
-                surface.global_leading = True
-                surface.properties["global_leading"] = True
+        return self.surfaces_items
                 
     @staticmethod
     def calculate_obb_and_geometry(

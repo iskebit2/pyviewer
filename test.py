@@ -1,39 +1,73 @@
-from windcalc.windengine import BuildingWindEngine
+def test_1(rel_, any_shared_,leading_edges, exposed_edges, same_axis):
+    if rel_ == "WINDWARD":
+        print("wind_relation.value:WINDWARD")
+        if any_shared_:
+            print("--> any_shared_ ise DUOPITCH", "HIPPED")
+        else:
+            print("--> any_shared_ değil ise MONOPITCH")
 
-points = {
-"P1": (0.0, 0.0, 0.0),
-"P2": (12000.0, 0.0, 0.0),
-"P3": (12000.0, 8000.0, 0.0),
-"P4": (0.0, 8000.0, 0.0),
-"P5": (0.0, 0.0, 4000.0),
-"P6": (12000.0, 0.0, 4000.0),
-"P7": (12000.0, 8000.0, 4000.0),
-"P8": (0.0, 8000.0, 4000.0),
-"P9": (3000.0, 4000.0, 5000.0),
-"P10": (12000.0, 4000.0, 5000.0),
-}
+        print("FGH", leading_edges,
+                "kenarlar e/10 offset et ve FG olarak işaretle. poligonun kalan kısmı H")
+        print("Bakılacak tablo:", 0)
 
-polygons = {
-"D1": ["P1", "P2", "P6", "P5"],
-"D2": ["P1", "P5", "P8", "P4"],
-"D3": ["P2", "P3", "P7", "P10", "P6"],
-"D4": ["P3", "P4", "P8", "P7"],
-"C1": ["P5", "P6", "P10", "P9"],
-"C2": ["P8", "P9", "P10", "P7"],
-"C3": ["P8", "P5", "P9"],
-}
+        
 
-p1_selected= (0.0, 0.0, 0.0)
-p2_selected= (12000.0, 0.0, 0.0)
+    elif rel_ == "LEEWARD":
+        print("wind_relation.value: LEEWARD")
+        if any_shared_:
+            print("--> any_shared_ ise DUOPITCH", "HIPPED")
+            print("DUOPITCH veya HIPPED çatı tipi farketmiyor ama cpe değerlerini kontrol et")
+            print("DUOPITCH için JI HIPPED için KJI.. önce türbülans alanı için "
+                    "leading_edges kenarları e/10 offset yap",
+                    f"edge indexes:{leading_edges}", "K, diğer exposed kenarlar:",
+                    f"edge indexes:{exposed_edges}", "J olur. yüzeyin geri kalanı her zaman I")
 
-building= BuildingWindEngine(points=points, polygons=polygons, scale_factor=1000)
+            
+        else:
+            print("--> any_shared_ değil ise MONOPITCH")
+            print("Bakılacak tablo:", 180)
+            print("FGH", f"edge indexes:{leading_edges}",
+                    "kenarlar e/10 offset et ve FG olarak işaretle. "
+                    "alçak saçak tarafı Fl, yüksek saçak tarafı Fu poligonun kalan kısmı H")
 
-geom_results = building.calculate_obb_and_geometry(
-        p1_selected, p2_selected, building.raw_points
-    )
+    elif rel_ == "PARALLEL":
+        print("wind_relation.value: PARALLEL")
+        if any_shared_:
+            if same_axis:
+                print("--> any_shared_ ise ve same_axis ise DUOPITCH")
+                print("Bakılacak tablo:", 90)
+                print("FGHI", f"edge indexes:{leading_edges}", "kenarlar e/10 offset et ve FG olarak işaretle.")
+                print("FG Bölgesi aynı akstaki diğer kenara uzayacak.",
+                        f"edge indexes:{leading_edges} alçak kot e/4 mesafede F kalan bölge G")
+                print("poligonun kalan kısmı e/2 ye kadar H sonrası I")
+            else:
+                print("--> any_shared_ ise ve same_axis değil ise HIPPED")
+                print("Bakılacak tablo:", 0)
+                print("LMN", f"edge indexes:{leading_edges}",
+                        "kenarlar e/10 offset et ve L olarak işaretle. "
+                        "poligonun kalan kısmı e/2 ye kadar M sonrası N")
+        else:
+            print("--> any_shared_ değil ise MONOPITCH")
+            print("Bakılacak tablo:", 90)
+            print("FGH", f"edge indexes:{leading_edges}",
+                    "kenarlar e/10 offset et ve FG olarak işaretle. "
+                    "poligonun kalan kısmı e/2 ye kadar H sonrası I")
 
-render_lines = building.generate_render_lines(geom_results)
 
-print(building.geometry)
-print(render_lines)
-print(geom_results)
+test_1("WINDWARD", True, [2],[2], False)
+test_1("WINDWARD", True, [2],[2], True)
+
+test_1("WINDWARD", False, [2],[2], False)
+test_1("WINDWARD", False, [2],[2], True)
+
+test_1("LEEWARD", False, [2],[2], False)
+test_1("LEEWARD", False, [2],[2], True)
+
+test_1("LEEWARD", True, [2],[2], False)
+test_1("LEEWARD", True, [2],[2], True)
+
+test_1("PARALLEL", False, [2],[2], False)
+test_1("PARALLEL", False, [2],[2], True)
+
+test_1("PARALLEL", True, [2],[2], False)
+test_1("PARALLEL", True, [2],[2], True)

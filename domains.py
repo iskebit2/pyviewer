@@ -52,6 +52,10 @@ class ClickableGraphicsItem(QGraphicsObject):
         self.name = name
         self._is_deleted = False
         self._is_visible = True
+
+        self._label_item = None            # QGraphicsTextItem
+        self._label_visible = True         # kullanıcı tercihi (global toggle)
+        self._label_offset = QPointF(0, 0) # alt sınıflar override eder
         
         self.setAcceptHoverEvents(True)
         self.setFlag(QGraphicsItem.ItemIsSelectable, True)
@@ -66,6 +70,27 @@ class ClickableGraphicsItem(QGraphicsObject):
         }
 
         self._color_override = None
+
+    def _ensure_label(self, text=None, color=None):
+        if self._label_item is None:
+            self._label_item = QGraphicsTextItem(text or self.name, self)
+            self._label_item.setDefaultTextColor(color or QColor("#111111"))
+            self._label_item.setFont(QFont("Arial", 8, QFont.Weight.Bold))
+            self._label_item.setZValue(self.zValue() + 1)
+        return self._label_item
+
+    def set_label_visible(self, visible):
+        self._label_visible = visible
+        if self._label_item:
+            self._label_item.setVisible(visible)
+
+    def is_label_visible(self):
+        return self._label_visible
+
+    def update_label_position(self):
+        """Alt sınıflar override eder."""
+        pass
+
     def set_color(self, color):
         """Ana rengi override et. QColor, hex string veya tuple kabul eder."""
         self._color_override = QColor(color)
@@ -267,10 +292,9 @@ class PointItem(ClickableGraphicsItem):
             selected="#e91e63", hidden="#9e9e9e", border="#0d47a1"
         )
 
-        self.label = QGraphicsTextItem(name, self)
-        self.label.setDefaultTextColor(QColor("#222222"))
-        self.label.setFont(QFont("Arial", 8, QFont.Weight.Bold))
-        self.label.setPos(radius + 3, -radius - 3)
+        self._ensure_label()
+        self._label_item.setPos(radius + 3, -radius - 3)
+        self.update_label_position()
 
     def set_selected_state(self, selected: bool):
         self._is_selected = selected
@@ -325,11 +349,30 @@ class EdgeItem(ClickableGraphicsItem):
             selected="#e91e63", hidden="#9e9e9e"
         )
 
+        self._ensure_label()
+        self._label_item.setDefaultTextColor(QColor("#b71c1c"))  # koyu kırmızı
+
     def set_line(self, p1: QPointF, p2: QPointF):
         self.prepareGeometryChange()
         self.p1_pos = p1
         self.p2_pos = p2
         self.update()
+        self.update_label_position()
+
+    def update_label_position(self):
+        if self._label_item is None:
+            return
+        mid = QPointF((self.p1_pos.x() + self.p2_pos.x()) / 2,
+                      (self.p1_pos.y() + self.p2_pos.y()) / 2)
+        dx = self.p2_pos.x() - self.p1_pos.x()
+        dy = self.p2_pos.y() - self.p1_pos.y()
+        length = math.hypot(dx, dy) or 1.0
+        nx, ny = -dy / length, dx / length
+
+        offset = 10
+        rect = self._label_item.boundingRect()
+        self._label_item.setPos(mid.x() + nx * offset - rect.width() / 2,
+                                mid.y() + ny * offset - rect.height() / 2)
 
     def set_selected_state(self, selected: bool):
         self._is_selected = selected
@@ -403,6 +446,9 @@ class PolygonItem(ClickableGraphicsItem):
         self._fill_hover    = QColor(171, 71, 188, 70)
         self._fill_selected = QColor(233, 30, 99, 100)
 
+        self._ensure_label()
+        self._label_item.setDefaultTextColor(QColor("#4a148c"))  # koyu mor
+
         self.set_default_colors(
             normal="#7b1fa2", hover="#ab47bc",
             selected="#e91e63", hidden="#9e9e9e", border="#7b1fa2"
@@ -429,12 +475,30 @@ class PolygonItem(ClickableGraphicsItem):
         if self._is_hovered:
             return self._fill_hover
         return self._fill_normal
-
+    
     def set_polygon(self, qpolygon: QPolygonF, depth: float):
         self.prepareGeometryChange()
         self.screen_polygon = qpolygon
         self.depth = depth
         self.setZValue(50 + depth)
+        self.update_label_position()
+
+    def update_label_position(self):
+        if self._label_item is None or self.screen_polygon.isEmpty():
+            return
+        # Centroid — ağırlık merkezi
+        pts = self.screen_polygon
+        n = pts.count()
+        if n == 0:
+            return
+        cx = sum(pts.at(i).x() for i in range(n)) / n
+        cy = sum(pts.at(i).y() for i in range(n)) / n
+
+        # Label'ı ortala
+        rect = self._label_item.boundingRect()
+        self._label_item.setPos(cx - rect.width() / 2,
+                                cy - rect.height() / 2)
+
 
     def set_selected_state(self, selected: bool):
         self._is_selected = selected
@@ -487,12 +551,32 @@ class FrameItem(ClickableGraphicsItem):
             selected="#e91e63", hidden="#9e9e9e"
         )
 
+        self._ensure_label()
+        self._label_item.setDefaultTextColor(QColor("#0d47a1"))  # koyu mavi
 
     def set_line(self, p1: QPointF, p2: QPointF):
         self.prepareGeometryChange()
         self.p1_pos = p1
         self.p2_pos = p2
         self.update()
+        self.update_label_position()
+
+    def update_label_position(self):
+        if self._label_item is None:
+            return
+        mid = QPointF((self.p1_pos.x() + self.p2_pos.x()) / 2,
+                      (self.p1_pos.y() + self.p2_pos.y()) / 2)
+
+        # Çizgiye dik normal — label'ı çizginin dışına kaydır
+        dx = self.p2_pos.x() - self.p1_pos.x()
+        dy = self.p2_pos.y() - self.p1_pos.y()
+        length = math.hypot(dx, dy) or 1.0
+        nx, ny = -dy / length, dx / length   # dik normal
+
+        offset = 12   # piksel — label çizgiden 12px dışarı
+        rect = self._label_item.boundingRect()
+        self._label_item.setPos(mid.x() + nx * offset - rect.width() / 2,
+                                mid.y() + ny * offset - rect.height() / 2)
 
     def set_selected_state(self, selected: bool):
         self._is_selected = selected

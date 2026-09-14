@@ -50,6 +50,8 @@ class View3D(QGraphicsView):
         
         self.graphics_line_items = []
 
+        self.show_labels = True   # tüm item label'ları görünür mü?
+
         self._visibility_states = {}
         self._color_overrides = {}
 
@@ -90,6 +92,9 @@ class View3D(QGraphicsView):
         self.axis_shortcut = QShortcut(QKeySequence("Ctrl+Shift+A"), self)
         self.axis_shortcut.activated.connect(self.toggle_axes)
 
+        self.label_shortcut = QShortcut(QKeySequence("Ctrl+Shift+L"), self)
+        self.label_shortcut.activated.connect(self.toggle_labels)
+
         self.context_menu_pos = QPointF()
         self.context_menu_item_type = None
         self.context_menu_item_id = None
@@ -107,6 +112,18 @@ class View3D(QGraphicsView):
 
         logging.debug("View3D: Initialization complete")
 
+    def toggle_labels(self):
+        """Tüm öğe etiketlerini aç/kapat."""
+        self.show_labels = not self.show_labels
+        logging.info(f"View3D: Labels visibility: {self.show_labels}")
+
+        # Sahnedeki tüm label'ları güncelle
+        for store in [self.point_items, self.polygon_items,
+                    self.frame_items, self.edge_items]:
+            for item in store.values():
+                if hasattr(item, "set_label_visible"):
+                    item.set_label_visible(self.show_labels)
+                    
     def toggle_debug(self):
         """Debug loglarını açıp kapatan fonksiyon"""
         self.debug_active = not self.debug_active
@@ -338,6 +355,10 @@ class View3D(QGraphicsView):
                 if override:
                     self.point_items[name].set_color(override)
 
+                if hasattr(self.point_items[name], "set_label_visible"):
+                    self.point_items[name].set_label_visible(self.show_labels)
+                    self.point_items[name]._label_item.setZValue(200 + depth + 0.5)
+
     def _draw_polygons(self):
         """Poligonları çizer"""
         for poly_name, pts in self.polygons.items():
@@ -377,9 +398,12 @@ class View3D(QGraphicsView):
                 if override:
                     poly_item.set_color(override)
 
+                if hasattr(poly_item, "set_label_visible"):
+                    poly_item.set_label_visible(self.show_labels)
+                    poly_item._label_item.setZValue(200 + depth + 0.5)
+
                 self.polygon_items[poly_name] = poly_item
                 self.scene.addItem(poly_item)
-
 
     def _draw_frames(self):
         """Frame'leri çizer"""
@@ -413,6 +437,12 @@ class View3D(QGraphicsView):
                 override = self._color_overrides.get(self._color_key("FRAME", frame_name))
                 if override:
                     frame_item.set_color(override)
+
+                if hasattr(frame_item, "set_label_visible"):
+                    frame_item.set_label_visible(self.show_labels)
+                    depth= max(depth1, depth2)
+                    frame_item._label_item.setZValue(200 + depth + 0.5)
+                    
 
                 self.frame_items[frame_name] = frame_item
                 self.scene.addItem(frame_item)
@@ -504,6 +534,9 @@ class View3D(QGraphicsView):
                 visible = self._get_visibility("EDGE", edge_key)
                 edge_item.setVisible(visible)
                 edge_item._is_visible = visible
+
+                if hasattr(edge_item, "set_label_visible"):
+                    edge_item.set_label_visible(self.show_labels)
 
                 self.edge_items[edge_key] = edge_item
                 self.scene.addItem(edge_item)
@@ -1120,7 +1153,12 @@ class View3D(QGraphicsView):
         show_objects_action = QAction("Show Objects Panel", menu)
         show_objects_action.triggered.connect(self._show_objects_dialog)
         menu.addAction(show_objects_action)
-        
+
+        labels_action = QAction("Toggle Labels", menu)
+        labels_action.setCheckable(True)
+        labels_action.setChecked(self.show_labels)
+        labels_action.triggered.connect(self.toggle_labels)
+        menu.addAction(labels_action)
         self._show_menu(menu)
 
     def _add_general_menu_items(self, menu, item_type, item_id):
@@ -2063,11 +2101,9 @@ if __name__ == "__main__":
     app = QApplication(sys.argv)
 
     points = {
-        "P1": (0, 0, 0),
-        "P2": (5000, 0, 0),
-        "P3": (5000, 4000, 0),
-        "P4": (0, 4000, 0),
-        "P5": (0, 0, 3000),
+        "P1": (2000, 2000, 0),
+        "P2": (2500, 5000, 0),
+        "P3": (0, 0, 0),
     }
 
     polygons = {
@@ -2077,14 +2113,14 @@ if __name__ == "__main__":
     
     frames = {
         "F1": ["P1", "P2"],
-        "F2": ["P3", "P5"],
+        "F2": ["P3", "P1"],
     }
     
     render_lines= [[[0.0, 0.0, 0.0], [12000.0, 0.0, 0.0]], [[12000.0, 0.0, 0.0], [12000.0, 8000.0, 0.0]], [[12000.0, 8000.0, 0.0], [0.0, 8000.0, 0.0]], [[0.0, 8000.0, 0.0], [0.0, 0.0, 0.0]], [[6000.0, -4200.0, 0.0], [6000.0, 0.0, 0.0]], [[6000.0, 0.0, 0.0], [6630.0, -1050.0, 0.0]], [[6000.0, 0.0, 0.0], [5370.0, -1050.0, 0.0]], [[5496.0, -4956.0, 0.0], [5748.0, -5460.0, 0.0]], [[5748.0, -5460.0, 0.0], [6000.0, -4956.0, 0.0]], [[6000.0, -4956.0, 0.0], [6252.0, -5460.0, 0.0]], [[6252.0, -5460.0, 0.0], [6504.0, -4956.0, 0.0]]]
     
     view = View3D()
     
-    view.set_data(points= points, polygons=polygons, lines=render_lines, frames=frames)
+    view.set_data(points= points, lines=render_lines, frames=frames)
 
     view.resize(1000, 700)
     view.show()
