@@ -5,7 +5,7 @@ import numpy as np
 from dataclasses import dataclass
 from enum import Enum
 from typing import List, Dict, Tuple, Optional, Union, Any
-from data.wind_data import ARAZI_KATEGORILERI, CPI_POSITIVE, CPI_NEGATIVE, RHO,K_I,C0, wall_cpe_table,MONOPITCH_CPE_DATA,DUOPITCH_CPE_DATA,HIPPED_CPE_DATA
+from data.wind_data import ARAZI_KATEGORILERI, CPI_POSITIVE, CPI_NEGATIVE, RHO,K_I,C0, WALL_CPE_TABLE,MONOPITCH_CPE_DATA,DUOPITCH_CPE_DATA,HIPPED_CPE_DATA
 from .windplane import WindPlane, SurfaceType, WindRelation
 
 class BuildingWindEngine:
@@ -419,6 +419,20 @@ def dict_tree(data, indent=""):
 
 import numpy as np
 
+def dict_tree(data, indent=""):
+    lines = []
+    items = list(data.items())
+    for i, (key, value) in enumerate(items):
+        last = i == len(items) - 1
+        branch = "└── " if last else "├── "
+        if isinstance(value, dict):
+            lines.append(f"{indent}{branch}{key}")
+            new_indent = indent + ("    " if last else "│   ")
+            lines.append(dict_tree(value, new_indent))
+        else:
+            lines.append(f"{indent}{branch}{key} : {value}")
+    return "\n".join(lines)
+    
 def compute_surface_topological_properties(surface, all_surfaces):
     """
     Mevcut surface ve edge verilerini kullanarak:

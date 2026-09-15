@@ -98,7 +98,7 @@ class EdgeAnalyzer:
         """
 
         # XY doğrultusu olmayan kenar.
-        if edge.direction_xy is None:
+        if edge.direction_2d is None:
             pos1 = float(
                 np.dot(edge.p1[:2], self._wind_to_2d)
             )
@@ -123,7 +123,7 @@ class EdgeAnalyzer:
 
         # Kenar doğrultusu ile rüzgar doğrultusu arasındaki açı.
         direction = np.asarray(
-            edge.direction_xy,
+            edge.direction_2d,
             dtype=float
         )
 
@@ -282,7 +282,7 @@ class EdgeAnalyzer:
 
         for edge in self.edges.values():
 
-            if edge.direction_xy is None:
+            if edge.direction_2d is None:
                 continue
 
             for other_name, other_surface in other_roofs:
@@ -290,7 +290,7 @@ class EdgeAnalyzer:
                 for other_edge in other_surface.edges.values():
 
                     # Aynı fiziksel XY ekseninde değillerse geç
-                    if not edge.same_axis_xy(other_edge):
+                    if not edge.same_axis_2d(other_edge):
                         continue
 
                     is_same = edge.is_same_edge(
@@ -306,7 +306,7 @@ class EdgeAnalyzer:
                             "angle",
                             None,
                         ),
-                        "direction_xy": other_edge.direction_xy,
+                        "direction_2d": other_edge.direction_2d,
                         "same_edge": is_same,
                     }
 

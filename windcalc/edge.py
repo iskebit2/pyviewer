@@ -13,14 +13,16 @@ class Edge:
     index: int
     p1: np.ndarray
     p2: np.ndarray
+    p1_2d: np.ndarray
+    p2_2d: np.ndarray
 
     vector: np.ndarray
     length: float
-    unit_vector: np.ndarray
+    direction: np.ndarray
 
-    vector_xy: np.ndarray
-    length_xy: float
-    direction_xy: Optional[np.ndarray]
+    vector_2d: np.ndarray
+    length_2d: float
+    direction_2d: Optional[np.ndarray]
 
     # EdgeAnalyzer tarafından doldurulur
     pos_front: Optional[float] = None
@@ -34,44 +36,53 @@ class Edge:
     same_axis: List[Dict[str, Any]] = field(default_factory=list)
 
     @classmethod
-    def from_points(cls, index: int, p1, p2) -> "Edge":
-        p1 = np.asarray(p1, dtype=float).copy()
-        p2 = np.asarray(p2, dtype=float).copy()
+    def from_points(cls, i: int, plane) -> "Edge":
+        p1 = plane.pts_3d[i]
+        p2 = plane.pts_3d[(i + 1) % plane.n_pts]
+
+        p1_2d = plane.pts_2d[i]
+        p2_2d = plane.pts_2d[(i + 1) % plane.n_pts]
 
         vector = p2 - p1
-        length = float(np.linalg.norm(vector))
+        length = np.linalg.norm(vector)
+
         if length < 1e-12:
-            raise ValueError(f"Çökmüş kenar: {index}")
+            direction = None
+        else:
+            direction = vector / length
 
-        unit_vector = vector / length
 
-        vector_xy = vector[:2].copy()
-        length_xy = float(np.linalg.norm(vector_xy))
+        vector_2d = p2_2d - p1_2d
+        length_2d = np.linalg.norm(vector_2d)
 
-        direction_xy = None if length_xy < 1e-12 else vector_xy / length_xy
+        if length_2d < 1e-12:
+            direction_2d = None
+        else:
+            direction_2d = vector_2d / length_2d
 
         return cls(
-            index=index,
+            index=i,
             p1=p1, p2=p2,
+            p1_2d=p1_2d, p2_2d=p2_2d,
             vector=vector,
             length=length,
-            unit_vector=unit_vector,
-            vector_xy=vector_xy,
-            length_xy=length_xy,
-            direction_xy=direction_xy,
+            direction=direction,
+            vector_2d=vector_2d,
+            length_2d=length_2d,
+            direction_2d=direction_2d,
         )
 
     # ------------------------------------------------------------------
     # Geometrik karşılaştırma (rüzgardan bağımsız)
     # ------------------------------------------------------------------
 
-    def same_axis_xy(
+    def same_axis_2d(
         self,
         other: "Edge",
         angle_tol: float = 2.0,
         distance_tol: float = 1e-6,
     ) -> bool:
-        d1, d2 = self.direction_xy, other.direction_xy
+        d1, d2 = self.direction_2d, other.direction_2d
         if d1 is None or d2 is None:
             return False
 
@@ -99,6 +110,6 @@ class Edge:
         self.angle = None
         self.exposed = False
         self.leading = False
-        self.vertical = (self.direction_xy is None)
+        self.vertical = (self.direction_2d is None)
         self.shared = []
         self.same_axis = []

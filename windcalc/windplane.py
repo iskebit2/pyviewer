@@ -1,6 +1,6 @@
 # windplane.py
 
-from data.wind_data import ARAZI_KATEGORILERI, CPI_POSITIVE, CPI_NEGATIVE, RHO,K_I,C0, wall_cpe_table,MONOPITCH_CPE_DATA,DUOPITCH_CPE_DATA,HIPPED_CPE_DATA
+from data.wind_data import ARAZI_KATEGORILERI, CPI_POSITIVE, CPI_NEGATIVE, RHO,K_I,C0, WALL_CPE_TABLE,MONOPITCH_CPE_DATA,DUOPITCH_CPE_DATA,HIPPED_CPE_DATA
 from .edge_analyzer import EdgeAnalyzer
 from .edge import Edge
 import math
@@ -42,7 +42,132 @@ def polygon_centroid(polygon: np.ndarray) -> np.ndarray:
 
     return np.mean(pts, axis=0)
 
+def _make_local_sys(poly_coords, tol=1e-9):
+    """
+    Düzlemsel 3D bir poligon için sağ elli yerel koordinat sistemi oluşturur.
 
+    Returns
+    -------
+    dict
+        {
+            "origin_3d": ...,
+            "u_dir": ...,
+            "v_dir": ...,
+            "normal": ...
+        }
+
+    Koordinat sistemi:
+        u_dir : poligon düzlemindeki ilk eksen
+        v_dir : poligon düzlemindeki ikinci eksen
+        normal: u_dir x v_dir
+    """
+
+    poly = np.asarray(poly_coords, dtype=float)
+
+    if poly.ndim != 2 or poly.shape[1] != 3:
+        raise ValueError("poly_coords (n, 3) şeklinde olmalıdır.")
+
+    if len(poly) < 3:
+        raise ValueError("En az üç nokta gerekli.")
+
+    origin = poly[0]
+
+    # ------------------------------------------------------------
+    # 1. İlk anlamlı kenarı bul -> u_dir adayı
+    # ------------------------------------------------------------
+
+    u_dir = None
+
+    for i in range(1, len(poly)):
+        v = poly[i] - origin
+        length = np.linalg.norm(v)
+
+        if length > tol:
+            u_dir = v / length
+            break
+
+    if u_dir is None:
+        raise ValueError("Poligon dejenere: bütün noktalar aynı.")
+
+    # ------------------------------------------------------------
+    # 2. u_dir'e paralel olmayan bir vektör bul
+    #    ve normal'i oluştur
+    # ------------------------------------------------------------
+
+    normal = None
+
+    for i in range(1, len(poly)):
+        v = poly[i] - origin
+
+        cross = np.cross(u_dir, v)
+        cross_len = np.linalg.norm(cross)
+
+        if cross_len > tol:
+            normal = cross / cross_len
+            break
+
+    if normal is None:
+        raise ValueError(
+            "Poligon dejenere: bütün noktalar aynı doğru üzerinde."
+        )
+
+    # ------------------------------------------------------------
+    # 3. Gerçek v_dir'i normal ve u_dir'den üret
+    #
+    # u x v = normal olacak şekilde
+    # ------------------------------------------------------------
+
+    v_dir = np.cross(normal, u_dir)
+    v_dir /= np.linalg.norm(v_dir)
+
+    return {
+        "origin_3d": origin.copy(),
+        "u_dir": u_dir,
+        "v_dir": v_dir,
+        "normal": normal,
+    }
+
+def _project_3d_to_local_2d(poly_coords, local_sys):
+
+    poly = np.asarray(poly_coords, dtype=float)
+
+    origin = local_sys["origin_3d"]
+    u_dir = local_sys["u_dir"]
+    v_dir = local_sys["v_dir"]
+
+    pts_2d = []
+
+    for pt in poly:
+        vec = pt - origin
+
+        u = np.dot(vec, u_dir)
+        v = np.dot(vec, v_dir)
+
+        pts_2d.append([u, v])
+
+    return np.asarray(pts_2d)
+
+def _unproject_local_2d_to_3d(pts_2d, local_sys):
+
+    pts_2d = np.asarray(pts_2d, dtype=float)
+
+    origin = local_sys["origin_3d"]
+    u_dir = local_sys["u_dir"]
+    v_dir = local_sys["v_dir"]
+
+    pts_3d = []
+
+    for u, v in pts_2d:
+        point = (
+            origin
+            + u * u_dir
+            + v * v_dir
+        )
+
+        pts_3d.append(point)
+
+    return np.asarray(pts_3d)
+    
 class WindPlane:
     def __init__(self, polygon: Union[List, np.ndarray], name: str = "Test"):
         """3B Düzlemsel Poligon Nesnesi"""
@@ -79,10 +204,10 @@ class WindPlane:
         )
 
         # En uygun projeksiyon düzlemi
-        self.proj_info = self._get_best_projection_plane()
+        self.proj_info = _make_local_sys(self.pts_3d)
 
         # 2B projeksiyon
-        self.pts_2d: np.ndarray = self._project_to_2d()
+        self.pts_2d: np.ndarray = _project_3d_to_local_2d(self.pts_3d, self.proj_info)
 
         self.angle = self._compute_angle()
 
@@ -105,20 +230,6 @@ class WindPlane:
             "wind_relation": WindRelation.nodata,
             "global_leading": None
         }
-
-    def _project_to_2d(self) -> np.ndarray:
-        """
-        3B polygonu, yüzey için seçilmiş en uygun
-        projeksiyon düzlemine taşır.
-
-        XY -> x,y
-        XZ -> x,z
-        YZ -> y,z
-        """
-
-        _, axes, _ = self.proj_info
-
-        return self.coords[:, axes]
 
     @staticmethod
     def close_polygon(polygon: np.ndarray, tol: float = 1e-8) -> np.ndarray:
@@ -170,81 +281,6 @@ class WindPlane:
         else:
             return 'YZ', (1, 2), 0
 
-    def _build_edges(self) -> dict:
-        edges = {}
-
-        for i in range(self.n_pts):
-            p1 = self.pts_3d[i]
-            p2 = self.pts_3d[(i + 1) % self.n_pts]
-
-            vector = p2 - p1
-            length = np.linalg.norm(vector)
-
-            if length < 1e-12:
-                continue
-
-            unit_vector = vector / length
-
-            # XY izdüşümü
-            vector_xy = vector[:2]
-            length_xy = np.linalg.norm(vector_xy)
-
-            if length_xy < 1e-12:
-                direction_xy = None
-            else:
-                direction_xy = vector_xy / length_xy
-
-            edges[i] = {
-                "p1": p1.copy(),
-                "p2": p2.copy(),
-
-                # 3B geometri
-                "vector": vector.copy(),
-                "length": float(length),
-                "unit_vector": unit_vector.copy(),
-
-                # XY izdüşümü
-                "vector_xy": vector_xy.copy(),
-                "length_xy": float(length_xy),
-                "direction_xy": (
-                    direction_xy.copy()
-                    if direction_xy is not None
-                    else None
-                ),
-            }
-
-        return edges
-    
-    def _unproject_2d_to_3d(self, pts_2d):
-        pts_2d = np.asarray(pts_2d, dtype=float)
-
-        _, axes, fixed_axis = self.proj_info
-
-        pts_3d = np.zeros((len(pts_2d), 3), dtype=float)
-
-        pts_3d[:, axes[0]] = pts_2d[:, 0]
-        pts_3d[:, axes[1]] = pts_2d[:, 1]
-
-        # Düzlemin gerçek konumundan sabit koordinatı bul.
-        pts_3d[:, fixed_axis] = self.coords[0, fixed_axis]
-
-        return pts_3d
-    
-    def _unproject_to_3d(self, pts_2d: np.ndarray) -> np.ndarray:
-        _, (idx1, idx2), missing_idx = self.proj_info
-        n_missing = self.normal_unit[missing_idx]
-        D = -np.dot(self.normal_unit, self.pts_3d[0])
-
-        pts_3d = []
-        for pt in pts_2d:
-            p3d = np.zeros(3)
-            p3d[idx1] = pt[0]
-            p3d[idx2] = pt[1]
-            known_sum = self.normal_unit[idx1] * pt[0] + self.normal_unit[idx2] * pt[1] + D
-            p3d[missing_idx] = -known_sum / n_missing
-            pts_3d.append(p3d)
-        return np.array(pts_3d)
-
     def polygon_direction_xy(self) -> str:
         """Poligonun XY düzlemindeki yönünü belirler."""
         
@@ -280,7 +316,7 @@ class WindPlane:
             p1 = self.pts_3d[i]
             p2 = self.pts_3d[(i + 1) % self.n_pts]
             try:
-                edges[i] = Edge.from_points(i, p1, p2)
+                edges[i] = Edge.from_points(i, self)
             except ValueError:
                 continue
         return edges
