@@ -210,7 +210,7 @@ class WindPlane:
         self.pts_2d: np.ndarray = _project_3d_to_local_2d(self.pts_3d, self.proj_info)
 
         self.angle = self._compute_angle()
-
+        self.is_ccw= None
         self.exposed_edge_list = []
         self.edges = self._build_edges()
 
@@ -385,6 +385,7 @@ class WindPlane:
         
     def _analyze_edges(self, w, building=None) -> Dict[int, Edge]:
         is_ccw = (self.polygon_direction_xy() == "CCW")
+        self.is_ccw= is_ccw
         rel = self.analyze_wind_relation(w)
 
         analyzer = EdgeAnalyzer(

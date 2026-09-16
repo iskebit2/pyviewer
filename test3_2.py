@@ -202,6 +202,13 @@ def _clip_line_to_polygon_2d(line_p1, line_p2, polygon) -> Optional[Tuple[np.nda
                 intersections.append(pt)
 
     if len(intersections) < 2:
+        print("CLIP FAILURE")
+        print("line_p1:", line_p1)
+        print("line_p2:", line_p2)
+        print("polygon:", polygon)
+        print("intersections:", intersections)
+        
+        
         return None
 
     # Noktaları çizgi yönündeki hizasına göre sırala
@@ -213,33 +220,23 @@ def offset_edge_2d(polygon_2d, p1_2d, p2_2d, w_vector_2d, d_L):
     """Kenarı 2D düzlemde w yönünde offsetler."""
     p1 = np.asarray(p1_2d, dtype=float)
     p2 = np.asarray(p2_2d, dtype=float)
-    edge_vec = p2 - p1
-    edge_len = np.linalg.norm(edge_vec)
-    if edge_len < 1e-8:
-        return None
-    edge_dir = edge_vec / edge_len
+    
 
     w_2d = np.asarray(w_vector_2d, dtype=float)
     w_len = np.linalg.norm(w_2d)
     if w_len < 1e-8:
         return None
     w_dir = w_2d / w_len
+    
+    offset = w_dir * d_L
+    
 
-    for sign in [1.0, -1.0]:
-        line_L_p1 = p1 + (sign * w_dir) * d_L
-        line_L_p2 = p2 + (sign * w_dir) * d_L
-        
-        result = _clip_line_to_polygon_2d(
-            line_L_p1,
-            line_L_p2,
-            polygon_2d
-        )
-        
-        # Eğer bu yön poligonda geçerli bir kesişim hattı (2 nokta) üretiyorsa doğru yön budur
-        if result is not None and len(result) == 2:
-            return result
-
-    return None
+    return _clip_line_to_polygon_2d(
+        p1 + offset,
+        p2 + offset,
+        polygon_2d
+    )
+    
     
 def create_edge_perp_2d(polygon_2d, p1_2d, p2_2d, w_vector_2d, d_L):
     """Kenarı 2D düzlemde w yönünde kenara dik yönde yeni çizgi oluşturur."""
@@ -329,56 +326,266 @@ def to_3d(poly, local_sys):
     return _unproject_local_2d_to_3d(poly, local_sys)
     
 def create_region_KJI_poly(plane1, e):
-    regions_2d= []
-    edges= plane1.edges
+    regions_2d = []
+    edges = plane1.edges
 
-    exposed_edges = [k for k, ed in edges.items() if ed.exposed]
-    leading_edges = [k for k, ed in edges.items() if ed.leading]
-    pts_2d= plane1.pts_2d
-    w_vector_3d= plane1.properties.get("wind_vector", [1,0,0])
-    w_vector_2d= w_vector_3d[:2]
+    exposed_edges = [
+        k for k, ed in edges.items()
+        if ed.exposed
+    ]
+
+    leading_edges = [
+        k for k, ed in edges.items()
+        if ed.leading
+    ]
+
+    pts_2d = np.asarray(plane1.pts_2d, dtype=float)
+
+    
+    is_ccw = plane1.is_ccw
+
+    # ---------------------------------------------------------
+    # İşlenecek tüm kenarlar
+    # ---------------------------------------------------------
+    target_edges = (
+        leading_edges
+        + [k for k in exposed_edges if k not in leading_edges]
+    )
+
     remain_ = pts_2d.copy()
     
-    # İşlenecek tüm kenar indekslerini birleştiriyoruz
-    target_edges = leading_edges + [k for k in exposed_edges if k not in leading_edges]
+    print("\nplane1.polygon_name:", plane1.polygon_name)
+    print("plane1.wind_relation.value:", plane1.wind_relation.value)
+    print("plane1.pts_3d:", plane1.pts_3d)
+    print("plane1.proj_info:", plane1.proj_info)
+    print("plane1.pts_2d:", plane1.pts_2d)
+    print("polygon is_ccw:", is_ccw)
+    print("leading_edges:", leading_edges)
+    print("exposed_edges:", exposed_edges)
+    print()
+
+    wind_3d = np.asarray(
+    plane1.properties["wind_vector"],
+    dtype=float
+)
+
+    u_dir = np.asarray(
+        plane1.proj_info["u_dir"],
+        dtype=float
+    )
+
+    v_dir = np.asarray(
+        plane1.proj_info["v_dir"],
+        dtype=float
+    )
+
+    w_plane = np.array([
+        np.dot(wind_3d, u_dir),
+        np.dot(wind_3d, v_dir),
+    ])
+
+    w_plane /= np.linalg.norm(w_plane)
+
+    def split_FG(poly_FG, edge):
+        print("split_FG.....")
+        print(edge.log)
+        w_vector_2d= edge.wind_to_2d
+        offset_fg1 = create_edge_perp_2d(
+        pts_2d,
+        edge.p1_2d,
+        edge.p2_2d,
+        w_vector_2d,
+        e / 4.0,
+    )
     
+    
+        if offset_fg1 is None:
+            
+            return []
+            
+        (result_L, result_R) = offset_fg1
+        cut_p1, cut_p2 = result_L
+
+        left_p1, right_p1 = split(poly_FG, cut_p1, cut_p2)
+
+        if left_p1 is None or right_p1 is None:
+            return []
+
+        cut_p1, cut_p2 = result_R
+
+        left_p2, right_p2 = split(right_p1, cut_p1, cut_p2)
+        
+
+        if left_p2 is None or right_p2 is None:
+            return []
+
+        regions_2d.append(left_p1)
+        regions_2d.append(left_p2)
+        regions_2d.append(right_p2)
+        
+    def split_MN(poly_M):
+        idxx_= leading_edges[0]
+        edge= edges[idxx_]
+        
+        w_plane = np.array([
+            np.dot(wind_3d, u_dir),
+            np.dot(wind_3d, v_dir),
+        ])
+        w_plane /= np.linalg.norm(w_plane)
+
+        p0e = (
+            np.asarray(edge.pos_front_pt, dtype=float)
+            + w_plane * (e / 2.0)
+        )
+
+        w_perp = np.array([
+            -w_plane[1],
+             w_plane[0]
+        ])
+
+        L = 10.0 * max(
+            np.ptp(pts_2d[:, 0]),
+            np.ptp(pts_2d[:, 1])
+        )
+
+        cut = _clip_line_to_polygon_2d(
+            p0e - w_perp * L,
+            p0e + w_perp * L,
+            remain_
+        )
+        print("\nsplit e/2...:")
+        print("poly_M:", poly_M)
+        print("edge:", edge)
+        print("w_plane:", w_plane)
+        print("w_perp:", w_perp)
+        print("L:", L)
+        print("cut:", cut)
+        print()
+        
+        
+        if cut is not None:
+            cut_p1, cut_p2= cut
+            left_MN, right_MN = split(poly_M, cut_p1, cut_p2)
+            
+            
+            regions_2d.append(left_MN)
+            regions_2d.append(right_MN)
+        else:
+            regions_2d.append(poly_M)
+            
+        
+    # ---------------------------------------------------------
+    # Her exposed / leading kenarı içeri offsetle
+    # ---------------------------------------------------------
     for idx_ in target_edges:
-        edge= edges[idx_]
-        p1_2d = edge.p1_2d
-        p2_2d = edge.p2_2d
 
-        offset = offset_edge_2d(
-                                pts_2d,
-                                p1_2d,
-                                p2_2d,
-                                w_vector_2d,
-                                e / 10.0,
-                            )
-        if offset is None:
-            print("leading_edges",idx_,"offset is None")
-            print("p1_2d",p1_2d,"p2_2d",p2_2d, "pts_2d:",pts_2d)
+        edge = edges[idx_]
+        
+        
+        p1 = np.asarray(edge.p1_2d, dtype=float)
+        p2 = np.asarray(edge.p2_2d, dtype=float)
+
+        edge_vec = p2 - p1
+        edge_len = np.linalg.norm(edge_vec)
+
+        if edge_len < 1e-10:
             continue
 
-        offset_p1, offset_p2 = offset
+        edge_dir = edge_vec / edge_len
+
+        # CCW polygon:
+        #   iç taraf = kenarın solu
+        #
+        # CW polygon:
+        #   iç taraf = kenarın sağı
+        left_normal = np.array([
+            -edge_dir[1],
+             edge_dir[0]
+        ])
+
+        if is_ccw:
+            inward = left_normal
+        else:
+            inward = -left_normal
+
+        offset_distance = e / 10.0
+        offset = inward * offset_distance
+
+        offset_p1 = p1 + offset
+        offset_p2 = p2 + offset
+
+        
+            
+            
+            
+        print(
+            "REGION EDGE:",
+            idx_,
+            "p1 =", p1,
+            "p2 =", p2,
+            "inward =", inward,
+            "offset =", offset
+        )
+
+        # -----------------------------------------------------
+        # Offset doğrusu ile mevcut poligonu kes
+        # -----------------------------------------------------
+        clipped = _clip_line_to_polygon_2d(
+            offset_p1,
+            offset_p2,
+            remain_
+        )
+
+        if clipped is None:
+            print(
+                "edge", idx_,
+                "offset/clipping is None"
+            )
+            continue
+
+        offset_p1, offset_p2 = clipped
+
+        # -----------------------------------------------------
+        # Poligonu offset doğrusu ile böl
+        # -----------------------------------------------------
         left, right = split(
-                            remain_,
-                            offset_p1,
-                            offset_p2,
-                        )
-        if left is None or right is None:
-            print("leading_edges",idx_,"left is None or right is None")
-            continue
+            remain_,
+            offset_p1,
+            offset_p2,
+        )
 
-        regions_2d.append(right)
-        print("leading_edges",idx_,"left eklendi")
-        remain_= left
-        
-        
-    regions_2d.append(remain_)
+        if left is None or right is None:
+            print(
+                "edge", idx_,
+                "left/right is None"
+            )
+            continue
+        if plane1.wind_relation.value == "WINDWARD":
+            split_FG(right, edge)
+        else:
+            regions_2d.append(right)
+
+        remain_ = left
+
+        print(
+            "edge", idx_,
+            "region eklendi"
+        )
+
+    # ---------------------------------------------------------
+    # Geriye kalan bölge
+    # ---------------------------------------------------------
+    if plane1.wind_relation.value == "PARALLEL":
+        split_MN(remain_)
+    else:
+        regions_2d.append(remain_)
+
     print("remain_ eklendi")
 
     return [
-        close_polygon(to_3d(region, plane1.proj_info))
+        close_polygon(
+            to_3d(region, plane1.proj_info)
+        )
         for region in regions_2d
         if valid_polygon(region)
     ]
@@ -405,72 +612,192 @@ polygons = {
 "C1": ["P5", "P6", "P10", "P9"],
 "C2": ["P8", "P9", "P10", "P7"],
 "C3": ["P8", "P5", "P9"],
+# "C4": ["P6", "P7", "P10"],
 }
 
 from windcalc.windengine import BuildingWindEngine, SurfaceType, dict_tree
 from windcalc.zone import Zone
 
 w_list = {"x+": [1, 0, 0], "y+": [0, 1, 0], "x-": [-1, 0, 0], "y-": [0, -1, 0]}
-w= "x-"
+w= "y+"
 
-building = BuildingWindEngine(points=points,
-                              polygons=polygons,
-                              v_b0= 28.0,
-                              terrain="Kategori III",
-                              w_dir= w_list[w],
-                              scale_factor=1000)
+# building = BuildingWindEngine(points=points,
+                              # polygons=polygons,
+                              # v_b0= 28.0,
+                              # terrain="Kategori III",
+                              # w_dir= w_list[w],
+                              # scale_factor=1000)
 
-wind_parameters = building.get_summary()
-print("\nwind_parameters:\n", dict_tree(wind_parameters))
+# wind_parameters = building.get_summary()
+# print("\nwind_parameters:\n", dict_tree(wind_parameters))
 
 
-render_lines= []
-for p_name in ['C1', 'C2','C3']:
-    all_surfaces= building.analysis_all_roof_wind(w_list[w])
+# render_lines= []
+# for p_name in ['C1', 'C2','C3']:
+    # all_surfaces= building.analysis_all_roof_wind(w_list[w])
 
-    plane1= all_surfaces[p_name]
+    # plane1= all_surfaces[p_name]
 
-    # for kk in ['name', 'surface_type', 'polygon', 'angle', 'pitch',
-               # 'wind_vector', 'polygon_direction_xy', 'wind_relation',
-               # 'global_leading', 'any_shared']:
-        # print(f" > {kk:20}: {plane1.properties.get(kk, '')}")
+    # # for kk in ['name', 'surface_type', 'polygon', 'angle', 'pitch',
+               # # 'wind_vector', 'polygon_direction_xy', 'wind_relation',
+               # # 'global_leading', 'any_shared']:
+        # # print(f" > {kk:20}: {plane1.properties.get(kk, '')}")
 
-    # edges= plane1.edges
+    # # edges= plane1.edges
 
-    # exposed_edges = [k for k, ed in edges.items() if ed.exposed]
-    # leading_edges = [k for k, ed in edges.items() if ed.leading]
-    # print("leading_edges:", leading_edges)
-    # print("exposed_edges:", exposed_edges)
+    # # exposed_edges = [k for k, ed in edges.items() if ed.exposed]
+    # # leading_edges = [k for k, ed in edges.items() if ed.leading]
+    # # print("leading_edges:", leading_edges)
+    # # print("exposed_edges:", exposed_edges)
 
-    # w_vector_2d= w_list[w][:2]
+    # # w_vector_2d= w_list[w][:2]
 
-    # pts_2d = plane1.pts_2d
-    # print("w_vector_2d:", w_vector_2d)
-    # # print("local_sys:", local_sys)
-    # print("pts_2d:", pts_2d)
+    # # pts_2d = plane1.pts_2d
+    # # print("w_vector_2d:", w_vector_2d)
+    # # # print("local_sys:", local_sys)
+    # # print("pts_2d:", pts_2d)
 
-    render_lines1= create_region_KJI_poly(plane1, building.e)
+    # render_lines1= create_region_KJI_poly(plane1, building.e)
     
-    render_lines.extend(render_lines1)
+    # render_lines.extend(render_lines1)
 
 from canvas3d import View3D
 
+# import sys
+# from PySide6.QtWidgets import QApplication
+
+# app = QApplication(sys.argv)
+
+
+
+
+
+
+
+# view = View3D()
+# view.set_data(points= {"O": [0,0,0]}, lines= render_lines)
+
+# view.resize(1000, 700)
+# view.show()
+# # view.zoom_extents()
+
+# sys.exit(app.exec())
+
 import sys
-from PySide6.QtWidgets import QApplication
+from PySide6.QtWidgets import QApplication, QWidget, QHBoxLayout, QVBoxLayout, QPushButton
+
+
+
+
+
+class WindViewer(QWidget):
+
+    def __init__(self):
+        super().__init__()
+
+        self.setWindowTitle("Wind Viewer")
+
+        self.w = "y+"
+
+        # ---------------------------------------------------------
+        # 3D görünüm
+        # ---------------------------------------------------------
+
+        self.view = View3D()
+
+        # ---------------------------------------------------------
+        # Rüzgar butonları
+        # ---------------------------------------------------------
+
+        buttons = QHBoxLayout()
+
+        for name in w_list:
+            button = QPushButton(name)
+            button.clicked.connect(
+                lambda checked=False, w=name:
+                    self.set_wind(w)
+            )
+            buttons.addWidget(button)
+
+        # ---------------------------------------------------------
+        # Layout
+        # ---------------------------------------------------------
+
+        layout = QVBoxLayout(self)
+
+        layout.addLayout(buttons)
+        layout.addWidget(self.view)
+
+        self.setLayout(layout)
+
+        # İlk görüntü
+        self.set_wind(self.w)
+
+    # -------------------------------------------------------------
+    # WIND
+    # -------------------------------------------------------------
+
+    def set_wind(self, w):
+
+        self.w = w
+
+        print("\n==============================")
+        print("WIND:", w)
+        print("==============================")
+
+        building = BuildingWindEngine(
+            points=points,
+            polygons=polygons,
+            v_b0=28.0,
+            terrain="Kategori III",
+            w_dir=w_list[w],
+            scale_factor=1000,
+        )
+
+        wind_parameters = building.get_summary()
+
+        print(
+            "\nwind_parameters:\n",
+            dict_tree(wind_parameters)
+        )
+
+        render_lines = []
+
+        all_surfaces = building.analysis_all_roof_wind(
+            w_list[w]
+        )
+
+        for p_name in ["C1", "C2", "C3"]:
+
+            plane1 = all_surfaces[p_name]
+
+            render_lines1 = create_region_KJI_poly(
+                plane1,
+                building.e
+            )
+
+            render_lines.extend(render_lines1)
+
+        # ---------------------------------------------------------
+        # Görüntüyü yenile
+        # ---------------------------------------------------------
+
+        self.view.set_data(
+            points={"O": [0, 0, 0]},
+            lines=render_lines
+        )
+
+        self.view.update()
+
+
+# ================================================================
+# MAIN
+# ================================================================
 
 app = QApplication(sys.argv)
 
-
-
-
-
-
-
-view = View3D()
-view.set_data(points= {"O": [0,0,0]}, lines= render_lines)
-
-view.resize(1000, 700)
-view.show()
-# view.zoom_extents()
+window = WindViewer()
+window.resize(1000, 700)
+window.show()
 
 sys.exit(app.exec())

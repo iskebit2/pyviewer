@@ -34,6 +34,7 @@ class Edge:
 
     shared: List[Dict[str, Any]] = field(default_factory=list)
     same_axis: List[Dict[str, Any]] = field(default_factory=list)
+    log: str=""
 
     @classmethod
     def from_points(cls, i: int, plane) -> "Edge":
@@ -70,6 +71,7 @@ class Edge:
             vector_2d=vector_2d,
             length_2d=length_2d,
             direction_2d=direction_2d,
+            
         )
 
     # ------------------------------------------------------------------
