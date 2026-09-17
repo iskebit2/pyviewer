@@ -10,13 +10,51 @@ from PySide6.QtCore import QPoint, Qt, QPointF, Signal
 from PySide6.QtGui import QColor, QPainter, QPen, QPolygonF, QPainterPath, QKeySequence, QShortcut, QAction
 from PySide6.QtWidgets import (QGraphicsView, QGraphicsScene, QGraphicsPathItem, QMenu, QMessageBox)
 
-from domains import AxisItem, Camera3D, ElementPropertiesDialog, PointItem, Vec3, PolygonItem, FrameItem, EdgeItem, ShowObjectsDialog
+from domains import AxisItem, Camera3D, ElementPropertiesDialog, PointItem, Vec3, PolygonItem, ZoneItem, FrameItem, EdgeItem, ShowObjectsDialog
 
 logging.basicConfig(
     level=logging.INFO,
     format="%(levelname)s - %(message)s"
 )
 
+
+def _lerp_color(c1: QColor, c2: QColor, t: float) -> QColor:
+    """t=0 -> c1, t=1 -> c2"""
+    t = max(0.0, min(1.0, t))
+    return QColor(
+        int(c1.red()   + (c2.red()   - c1.red())   * t),
+        int(c1.green() + (c2.green() - c1.green()) * t),
+        int(c1.blue()  + (c2.blue()  - c1.blue())  * t),
+    )
+
+# Blues kolormap'inin yaklaşık karşılığı (matplotlib 'Blues')
+_BLUES_STOPS = [
+    (0.00, QColor("#f7fbff")),
+    (0.25, QColor("#c6dbef")),
+    (0.50, QColor("#6baed6")),
+    (0.75, QColor("#2171b5")),
+    (1.00, QColor("#08306b")),
+]
+
+# Reds kolormap'inin yaklaşık karşılığı (matplotlib 'Reds')
+_REDS_STOPS = [
+    (0.00, QColor("#fff5f0")),
+    (0.25, QColor("#fcbba1")),
+    (0.50, QColor("#fb6a4a")),
+    (0.75, QColor("#cb181d")),
+    (1.00, QColor("#67000d")),
+]
+
+def _colormap_lookup(stops, t: float) -> QColor:
+    """stops: [(pos, QColor), ...] — t'ye karşılık gelen rengi interpolasyonla döndür."""
+    t = max(0.0, min(1.0, t))
+    for i in range(len(stops) - 1):
+        p0, c0 = stops[i]
+        p1, c1 = stops[i + 1]
+        if p0 <= t <= p1:
+            local_t = 0.0 if p1 == p0 else (t - p0) / (p1 - p0)
+            return _lerp_color(c0, c1, local_t)
+    return stops[-1][1]
 
 class View3D(QGraphicsView):
     element_selected = Signal(str, str, object)
@@ -25,6 +63,7 @@ class View3D(QGraphicsView):
     polygon_created = Signal(list)
     point_selected_for_operation = Signal(str)
     context_menu_action = Signal(str, object)
+    data_changed = Signal(str, str, object)  # (elem_type, elem_id, new_value)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -42,7 +81,9 @@ class View3D(QGraphicsView):
         self.polygons = {}
         self.lines = []
         self.frames = {}
-        
+        self.zones = {}
+
+        self.zone_items = {}
         self.point_items = {}
         self.polygon_items = {}
         self.edge_items = {}
@@ -118,7 +159,7 @@ class View3D(QGraphicsView):
         logging.info(f"View3D: Labels visibility: {self.show_labels}")
 
         # Sahnedeki tüm label'ları güncelle
-        for store in [self.point_items, self.polygon_items,
+        for store in [self.point_items, self.polygon_items, self.zone_items,
                     self.frame_items, self.edge_items]:
             for item in store.values():
                 if hasattr(item, "set_label_visible"):
@@ -136,20 +177,20 @@ class View3D(QGraphicsView):
             logging.getLogger().setLevel(logging.INFO)
             print("🐛 Debug Logları: KAPALI")
 
-    def set_data(self, points, polygons=None, lines=None, frames=None):
+    def set_data(self, points, polygons=None, lines=None, frames=None, zones=None):
         logging.info(f"View3D: set_data called - Points: {len(points) if points else 0}, "
-                     f"Polygons: {len(polygons) if polygons else 0}, "
-                     f"Lines: {len(lines) if lines else 0}, "
-                     f"Frames: {len(frames) if frames else 0}")
-        
+                    f"Polygons: {len(polygons) if polygons else 0}, "
+                    f"Lines: {len(lines) if lines else 0}, "
+                    f"Frames: {len(frames) if frames else 0}, "
+                    f"Zones: {len(zones) if zones else 0}")
+
         self.points = points if points is not None else {}
         self.polygons = polygons if polygons is not None else {}
         self.lines = lines if lines is not None else []
         self.frames = frames if frames is not None else {}
-        
-        # Görünürlük durumlarını temizle
+        self.zones = zones if zones is not None else {}
+
         self._visibility_states.clear()
-        
         self.rebuild()
 
     def rebuild(self):
@@ -184,7 +225,7 @@ class View3D(QGraphicsView):
         """Tüm grafik öğelerini temizler"""
         for item in list(self.point_items.values()) + list(self.polygon_items.values()) + \
                     list(self.edge_items.values()) + list(self.frame_items.values()) + \
-                    self.graphics_line_items:
+                    list(self.zone_items.values()) + self.graphics_line_items:
             try:
                 if item and item.scene():
                     self.scene.removeItem(item)
@@ -195,7 +236,7 @@ class View3D(QGraphicsView):
         self.polygon_items.clear()
         self.edge_items.clear()
         self.frame_items.clear()
-
+        self.zone_items.clear()
         self.graphics_line_items.clear()
 
     def _get_visibility_key(self, elem_type, item_id):
@@ -227,9 +268,9 @@ class View3D(QGraphicsView):
         elif elem_type == "FRAME" and item_id in self.frame_items:
             self.frame_items[item_id].setVisible(visible)
             self.frame_items[item_id]._is_visible = visible
-        # elif elem_type == "LINE" and item_id in self.line_items:
-        #     self.line_items[item_id].setVisible(visible)
-        #     self.line_items[item_id]._is_visible = visible
+        elif elem_type == "ZONE" and item_id in self.zone_items:
+            self.zone_items[item_id].setVisible(visible)
+            self.zone_items[item_id]._is_visible = visible
         elif elem_type == "EDGE" and item_id in self.edge_items:
             self.edge_items[item_id].setVisible(visible)
             self.edge_items[item_id]._is_visible = visible
@@ -281,7 +322,7 @@ class View3D(QGraphicsView):
         logging.debug("View3D: Drawing scene...")
         try:
             # Mevcut öğeleri temizle (axis_item hariç)
-            for item in list(self.polygon_items.values()) + list(self.edge_items.values()) + \
+            for item in list(self.polygon_items.values())+ list(self.zone_items.values()) + list(self.edge_items.values()) + \
                 list(self.frame_items.values()) + self.graphics_line_items:
                 try:
                     if item and item.scene():
@@ -292,6 +333,7 @@ class View3D(QGraphicsView):
             self.polygon_items.clear()
             self.edge_items.clear()
             self.frame_items.clear()
+            self.zone_items.clear()
             self.graphics_line_items.clear()
 
             # Noktaları güncelle
@@ -299,6 +341,10 @@ class View3D(QGraphicsView):
 
             # Poligonları çiz
             self._draw_polygons()
+
+            # Zone'ları çiz
+            self._draw_zones()
+            self._compute_zone_colors_by_cpe10()
 
             # Frame'leri çiz
             self._draw_frames()
@@ -314,12 +360,76 @@ class View3D(QGraphicsView):
             self._draw_axis()
 
             self.update_preview_path()
+            self.scene.invalidate()
             self.viewport().update()
             logging.debug("View3D: Scene drawing complete")
         except Exception as e:
             logging.error(f"draw_scene error: {e}")
             logging.error(traceback.format_exc())
 
+    def _draw_zones(self):
+        """Zone nesnelerini çizer."""
+        # Eski ZoneItem'ları sahneden kaldır
+        for item in list(self.zone_items.values()):
+            try:
+                if item and item.scene():
+                    self.scene.removeItem(item)
+            except RuntimeError:
+                pass
+        self.zone_items.clear()
+        self.scene.invalidate()   # <-- eski bbox'ı temizle
+
+        for zone_key, zone_list in self.zones.items():
+            if not isinstance(zone_list, (list, tuple)):
+                zone_list = [zone_list]
+
+            for idx, zone in enumerate(zone_list):
+                # Her zone için benzersiz bir item anahtarı
+                item_key = f"{zone_key}[{idx}]" if len(zone_list) > 1 else zone_key
+
+                try:
+                    coords = np.asarray(zone.coords, dtype=float)
+                    if coords.ndim != 2 or coords.shape[1] < 3 or len(coords) < 2:
+                        logging.warning(f"Zone {item_key}: geçersiz coords şekli {coords.shape}")
+                        continue
+                except Exception as e:
+                    logging.warning(f"Zone {item_key}: coords okunamadı - {e}")
+                    continue
+
+                zone_item = ZoneItem(item_key, zone, self)
+                zone_item.update_screen_points()
+
+                # Sinyaller
+                zone_item.clicked.connect(self.on_zone_clicked)
+                zone_item.context_menu_requested.connect(
+                    lambda n=item_key: self.show_context_menu("ZONE", n)
+                )
+                zone_item.visibility_changed.connect(
+                    lambda n, v: self._on_visibility_changed("ZONE", n, v)
+                )
+
+                # Seçim durumu
+                if self._is_item_selected("ZONE", item_key):
+                    zone_item.set_selected_state(True)
+
+                # Görünürlük
+                visible = self._get_visibility("ZONE", item_key)
+                zone_item.setVisible(visible)
+                zone_item._is_visible = visible
+
+                # Renk override
+                override = self._color_overrides.get(self._color_key("ZONE", item_key))
+                if override:
+                    zone_item.set_color(override)
+
+                # Label
+                if hasattr(zone_item, "set_label_visible"):
+                    zone_item.set_label_visible(self.show_labels)
+                    zone_item._label_item.setZValue(200 + zone_item.depth + 0.5)
+
+                self.zone_items[item_key] = zone_item
+                self.scene.addItem(zone_item)
+            self._compute_zone_colors_by_cpe10()
     def _draw_axis(self):
         """Eksenleri 0,0,0 konumunda çiz"""
         # Eski ekseni temizle
@@ -628,6 +738,7 @@ class View3D(QGraphicsView):
         for item_dict, item_type in [
             (self.point_items, "POINT"),
             (self.polygon_items, "POLYGON"),
+            (self.zone_items, "ZONE"),
             (self.edge_items, "EDGE"),
             (self.frame_items, "FRAME"),
         ]:
@@ -664,7 +775,7 @@ class View3D(QGraphicsView):
         self.creation_sequence.clear()
         self.update_preview_path()
 
-        for item_dict in [self.point_items, self.polygon_items,
+        for item_dict in [self.point_items, self.polygon_items, self.zone_items,
                         self.edge_items, self.frame_items]:
             for item in item_dict.values():
                 item.set_selected_state(False)
@@ -712,6 +823,20 @@ class View3D(QGraphicsView):
             else:
                 self.select_element("POLYGON", name)
                 self.element_selected.emit("POLYGON", name, None)
+    def on_zone_clicked(self, name):
+        logging.debug(f"View3D: Zone clicked - {name}")
+
+        if self.draw_mode or self.edge_selection_mode:
+            return
+
+        if self._has_modifier(Qt.KeyboardModifier.ControlModifier):
+            self.toggle_multi_selection("ZONE", name)
+        else:
+            self.select_element("ZONE", name)
+            # Zone verisini de gönderelim
+            zone_item = self.zone_items.get(name)
+            payload = zone_item.zone if zone_item else None
+            self.element_selected.emit("ZONE", name, payload)
 
     def _show_edge_polygon_selection(self, edge_key, parent_polygons):
         """Kenarın ait olduğu poligonları seçmek için dialog gösterir"""
@@ -901,6 +1026,7 @@ class View3D(QGraphicsView):
         for item_dict, item_type in [
             (self.point_items, "POINT"),
             (self.polygon_items, "POLYGON"),
+            (self.zone_items, "ZONE"),
             (self.edge_items, "EDGE"),
             (self.frame_items, "FRAME"),
         ]:
@@ -1187,6 +1313,7 @@ class View3D(QGraphicsView):
         handlers = {
             "POINT": self._add_point_menu_items,
             "POLYGON": self._add_polygon_menu_items,
+            "ZONE": self._add_zone_menu_items,
             "EDGE": self._add_edge_menu_items,
             "FRAME": self._add_frame_menu_items,
         }
@@ -1255,7 +1382,23 @@ class View3D(QGraphicsView):
             )
             info_action.setEnabled(False)
             menu.addAction(info_action)
-    
+
+    def _add_zone_menu_items(self, menu, zone_id):
+        zone_item = self.zone_items.get(zone_id)
+        if not zone_item:
+            return
+        z = zone_item.zone
+        info = QAction(
+            f"🏠 {z.label} | surface={z.surface} | {z.table_type} | pitch={z.pitch:.3f}",
+            menu
+        )
+        info.setEnabled(False)
+        menu.addAction(info)
+
+        info2 = QAction(f"Köşe sayısı: {len(zone_item.coords_3d)}", menu)
+        info2.setEnabled(False)
+        menu.addAction(info2)
+        
     def _add_polygon_menu_items(self, menu, polygon_id):
         if polygon_id in self.polygons:
             points = self.polygons[polygon_id]
@@ -1583,6 +1726,19 @@ class View3D(QGraphicsView):
                 "ID": elem_id,
                 "Nokta Sayısı": len(points),
                 "Noktalar": ", ".join(points) if points else "",
+            }
+
+        elif elem_type == "ZONE" and elem_id in self.zone_items:
+            z = self.zone_items[elem_id].zone
+            properties = {
+                "Tür": "Zone",
+                "ID": elem_id,
+                "Label": z.label,
+                "Surface": z.surface,
+                "Table Type": z.table_type,
+                "Table Type Dir": getattr(z, "table_type_dir", 0),
+                "Pitch": z.pitch,
+                "Köşe Sayısı": len(self.zone_items[elem_id].coords_3d),
             }
                 
         elif elem_type == "FRAME" and elem_id in self.frames:
@@ -2093,6 +2249,70 @@ class View3D(QGraphicsView):
                     "Noktalar": ", ".join(str(p) for p in pts),
                 }
         return None
+
+    def _compute_zone_colors_by_cpe10(self):
+        """
+        Her zone için cpe10 değerine göre QColor üretir ve ZoneItem'a uygular.
+        Negatifler Blues, pozitifler Reds skalasında.
+        """
+        if not self.zones:
+            return
+
+        # 1) Tüm cpe10 değerlerini topla
+        entries = []  # (item_key, zone_obj, cpe10_value)
+        for zone_key, zone_list in self.zones.items():
+            if not isinstance(zone_list, (list, tuple)):
+                zone_list = [zone_list]
+            for idx, zone in enumerate(zone_list):
+                item_key = f"{zone_key}[{idx}]" if len(zone_list) > 1 else zone_key
+                cpe = getattr(zone, "cpe10", None)
+                if cpe is None:
+                    continue
+                if isinstance(cpe, tuple):
+                    cpe = cpe[0]
+                try:
+                    cpe = float(cpe)
+                except (TypeError, ValueError):
+                    continue
+                entries.append((item_key, zone, cpe))
+
+        if not entries:
+            return
+
+        # 2) Negatif/pozitif ayır, min/max bul
+        negs = [v for _, _, v in entries if v < 0]
+        poss = [v for _, _, v in entries if v >= 0]
+
+        min_neg_abs = abs(min(negs)) if negs else 0.0   # en büyük negatifin mutlak değeri
+        max_pos     = max(poss) if poss else 0.0
+
+        # 3) Her zone için normalize edip rengi ata
+        for item_key, zone, cpe in entries:
+            if cpe < 0:
+                # 0 -> light, min -> dark
+                t = abs(cpe) / min_neg_abs if min_neg_abs > 0 else 0.0
+                color = _colormap_lookup(_BLUES_STOPS, t)
+            else:
+                t = cpe / max_pos if max_pos > 0 else 0.0
+                color = _colormap_lookup(_REDS_STOPS, t)
+
+            # Alpha'yı zone fill için ayarla (dolgu için hafif saydam)
+            fill = QColor(color)
+            fill.setAlpha(220)   # dolgu saydamlığı — istersen 60-180 arası dene
+
+            # ZoneItem'a uygula
+            item = self.zone_items.get(item_key)
+            if item is not None:
+                item.set_color(fill)   # ZoneItem.set_color override
+
+    def get_all_data(self):
+        return {
+            "points": self.points,
+            "polygons": self.polygons,
+            "lines": self.lines,
+            "frames": self.frames,
+            "zones": self.zones,
+        }
         
 if __name__ == "__main__":
     import sys

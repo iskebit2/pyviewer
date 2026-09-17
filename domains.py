@@ -678,6 +678,151 @@ class LineItem(ClickableGraphicsItem):
             path.lineTo(p)
         painter.drawPath(path)
 
+class ZoneItem(ClickableGraphicsItem):
+    """
+    Zone nesnelerini çizen grafik öğesi.
+    PointItem'lara bağımlı değildir; koordinatları doğrudan 3D dünya
+    koordinatı olarak alır ve View3D üzerinden projekte eder.
+    """
+
+    def __init__(self, name, zone, view3d, parent=None):
+        super().__init__(name, parent)
+        self.zone = zone                    # Zone nesnesi
+        self.view3d = view3d                # projeksiyon için
+        self.coords_3d = np.asarray(zone.coords, dtype=float)  # (N,3)
+        self.screen_points = []             # QPointF listesi
+        self.depth = 0.0
+        self._is_selected = False
+        self._is_hovered = False
+
+        self.setZValue(60)
+
+        # Zone için varsayılan palet (poligondan farklı ton)
+        self._fill_normal   = QColor(0, 150, 136, 45)     # teal
+        self._fill_hover    = QColor(0, 188, 212, 80)     # cyan
+        self._fill_selected = QColor(233, 30, 99, 110)    # pink
+
+        self.set_default_colors(
+            normal="#00897b", hover="#00bcd4",
+            selected="#e91e63", hidden="#9e9e9e", border="#004d40"
+        )
+
+        self._ensure_label()
+        self._label_item.setDefaultTextColor(QColor("#004d40"))
+
+        # Zone etiketi: label + surface + table_type
+        label_text = f"{zone.label}"
+        self._label_item.setPlainText(label_text)
+
+    # ------------------------------------------------------------- geometry
+    def update_screen_points(self):
+        """3D coords -> ekran koordinatları (View3D.screen_position ile)."""
+        self.prepareGeometryChange()
+        old_rect = self.boundingRect()  # eski bbox'ı al
+
+        self.screen_points = []
+        depths = []
+        for p in self.coords_3d:
+            pos, depth = self.view3d.screen_position(Vec3(float(p[0]), float(p[1]), float(p[2])))
+            self.screen_points.append(pos)
+            depths.append(depth)
+        self.depth = sum(depths) / len(depths) if depths else 0.0
+        self.setZValue(50 + self.depth)
+
+        if self.scene():
+            self.scene().invalidate(old_rect.adjusted(-2, -2, 2, 2))
+            self.scene().invalidate(self.boundingRect().adjusted(-2, -2, 2, 2))
+        self.update_label_position()
+        self.update()
+
+    def get_polygon(self) -> QPolygonF:
+        poly = QPolygonF()
+        for p in self.screen_points:
+            poly.append(p)
+        return poly
+
+    # ---------------------------------------------------------------- label
+    def update_label_position(self):
+        if self._label_item is None or not self.screen_points:
+            return
+        n = len(self.screen_points)
+        cx = sum(p.x() for p in self.screen_points) / n
+        cy = sum(p.y() for p in self.screen_points) / n
+        rect = self._label_item.boundingRect()
+        self._label_item.setPos(cx - rect.width() / 2, cy - rect.height() / 2)
+
+    # -------------------------------------------------------------- states
+    def set_selected_state(self, selected: bool):
+        self._is_selected = selected
+        self.update()
+
+    def hoverEnterEvent(self, event):
+        self._is_hovered = True
+        self.update()
+        super().hoverEnterEvent(event)
+
+    def hoverLeaveEvent(self, event):
+        self._is_hovered = False
+        self.update()
+        super().hoverLeaveEvent(event)
+
+    # --------------------------------------------------------------- paint
+    def get_fill_color(self):
+        if not self._is_visible:
+            return QColor(158, 158, 158, 40)
+        if self._color_override is not None:
+            return self._color_override
+        if self._is_selected:
+            return self._fill_selected
+        if self._is_hovered:
+            return self._fill_hover
+        return self._fill_normal
+
+    def boundingRect(self):
+        if not self.screen_points:
+            return QRectF()
+        min_x = min(p.x() for p in self.screen_points)
+        max_x = max(p.x() for p in self.screen_points)
+        min_y = min(p.y() for p in self.screen_points)
+        max_y = max(p.y() for p in self.screen_points)
+        return QRectF(min_x - 5, min_y - 5,
+                      max_x - min_x + 10, max_y - min_y + 10)
+
+    def shape(self):
+        path = QPainterPath()
+        path.addPolygon(self.get_polygon())
+        return path
+
+    def paint(self, painter, option, widget=None):
+        if len(self.screen_points) < 2:
+            return
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+
+        fill = self.get_fill_color()
+        border = self.get_active_color(self._is_hovered, self._is_selected)
+
+        pen = QPen(border, 2)
+        if self.zone.table_type == "ROOF":
+            pen.setStyle(Qt.PenStyle.SolidLine)
+        elif self.zone.table_type == "WALL":
+            pen.setStyle(Qt.PenStyle.DashLine)
+        elif self.zone.table_type == "CEILING":
+            pen.setStyle(Qt.PenStyle.DotLine)
+        painter.setPen(pen)
+        painter.setBrush(QBrush(fill))
+
+        # Zone bir polyline (genelde kapalı); polygon olarak çiz
+        painter.drawPolygon(self.get_polygon())
+
+    def set_color(self, color):
+    #     """Dolgu rengini override et; alpha'yı korur."""
+        c = QColor(color)
+    #     if c.alpha() == 255:
+    #         c.setAlpha(self._fill_normal.alpha())
+    #     self._color_override = c
+    #     # Kenar rengini de biraz koyulaştır
+        self._colors["border"] = c.darker(150)
+        self.update()
 
 # ElementPropertiesDialog - Düzeltilmiş versiyon
 class ElementPropertiesDialog(QDialog):
@@ -776,7 +921,7 @@ class ElementPropertiesDialog(QDialog):
     def apply_changes(self):
         updated_properties = self._get_updated_properties()
         self._update_data(updated_properties)
-        QMessageBox.information(self, "Başarılı", "Değişiklikler uygulandı!")
+        logging.info(f"Properties applied for {self.elem_type}:{self.elem_id}")
 
     def _update_data(self, updated_properties):
         if self.elem_type == "POINT" and self.elem_id in self.view3d.points:
@@ -786,6 +931,7 @@ class ElementPropertiesDialog(QDialog):
                 z = float(updated_properties.get("Z", 0))
                 self.view3d.points[self.elem_id] = (x, y, z)
                 self.view3d.draw_scene()
+                self.view3d.data_changed.emit("POINT", self.elem_id, (x, y, z))
             except ValueError as e:
                 QMessageBox.warning(self, "Hata", f"Geçersiz koordinat değeri: {e}")
                 
@@ -806,6 +952,7 @@ class ElementPropertiesDialog(QDialog):
             if start and end:
                 self.view3d.frames[self.elem_id] = (start, end)
                 self.view3d.draw_scene()
+        
 
     def accept(self):
         self.apply_changes()
@@ -887,6 +1034,8 @@ class ShowObjectsDialog(QDialog):
             return list(self.view3d.point_items.items())
         if elem_type == "POLYGON":
             return list(self.view3d.polygon_items.items())
+        if elem_type == "ZONE":
+            return [(zid, item) for zid, item in self.view3d.zone_items.items()]
         if elem_type == "FRAME":
             return list(self.view3d.frame_items.items())
         if elem_type == "EDGE":
@@ -906,6 +1055,8 @@ class ShowObjectsDialog(QDialog):
             item = self.view3d.point_items.get(item_id)
         elif elem_type == "POLYGON":
             item = self.view3d.polygon_items.get(item_id)
+        elif elem_type == "ZONE":
+            item = self.view3d.zone_items.get(item_id)
         elif elem_type == "FRAME":
             item = self.view3d.frame_items.get(item_id)
         elif elem_type == "EDGE":
@@ -928,6 +1079,7 @@ class ShowObjectsDialog(QDialog):
         item_dict = {
             "POINT": self.view3d.point_items,
             "POLYGON": self.view3d.polygon_items,
+            "ZONE": self.view3d.zone_items,
             "FRAME": self.view3d.frame_items,
             "EDGE": self.view3d.edge_items,
         }[elem_type]
@@ -947,6 +1099,7 @@ class ShowObjectsDialog(QDialog):
         categories = [
             ("POINT",   "Noktalar"),
             ("POLYGON", "Poligonlar"),
+            ("ZONE", "Zone'lar"),
             ("FRAME",   "Frame'ler"),
             ("EDGE",    "Kenarlar"),
             ("LINE",    "Line'lar"),

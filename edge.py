@@ -6,259 +6,444 @@ from typing import List, Dict, Tuple, Optional, Union, Any
 
 @dataclass
 class Edge:
+    """
+    Saf geometrik kenar verisi. Rüzgar analizi EdgeAnalyzer tarafından yapılır.
+    """
     index: int
     p1: np.ndarray
     p2: np.ndarray
+    p1_2d: np.ndarray
+    p2_2d: np.ndarray
 
     vector: np.ndarray
     length: float
-    unit_vector: np.ndarray
+    direction: np.ndarray
 
-    vector_xy: np.ndarray
-    length_xy: float
-    direction_xy: Optional[np.ndarray]
+    vector_2d: np.ndarray
+    length_2d: float
+    direction_2d: Optional[np.ndarray]
 
-    front_positions: Optional[Tuple[float, float]] = None
+    # EdgeAnalyzer tarafından doldurulur
+    pos_front: Optional[float] = None
+    pos_back: Optional[float] = None
+
     angle: Optional[float] = None
     exposed: bool = False
     leading: bool = False
+    vertical: bool = False
+    _global: bool = False
 
     shared: List[Dict[str, Any]] = field(default_factory=list)
     same_axis: List[Dict[str, Any]] = field(default_factory=list)
+    log: str=""
+    wind_to_2d: np.ndarray= None
+    pos_front_pt: np.ndarray= None
 
     @classmethod
-    def from_points(cls, index: int, p1, p2):
-        p1 = np.asarray(p1, dtype=float).copy()
-        p2 = np.asarray(p2, dtype=float).copy()
+    def from_points(cls, i: int, plane) -> "Edge":
+        p1 = plane.pts_3d[i]
+        p2 = plane.pts_3d[(i + 1) % plane.n_pts]
+
+        p1_2d = plane.pts_2d[i]
+        p2_2d = plane.pts_2d[(i + 1) % plane.n_pts]
 
         vector = p2 - p1
         length = np.linalg.norm(vector)
 
         if length < 1e-12:
-            raise ValueError(f"Çökmüş kenar: {index}")
-
-        unit_vector = vector / length
-
-        vector_xy = vector[:2].copy()
-        length_xy = np.linalg.norm(vector_xy)
-
-        if length_xy < 1e-12:
-            direction_xy = None
+            direction = None
         else:
-            direction_xy = vector_xy / length_xy
+            direction = vector / length
+
+
+        vector_2d = p2_2d - p1_2d
+        length_2d = np.linalg.norm(vector_2d)
+
+        if length_2d < 1e-12:
+            direction_2d = None
+        else:
+            direction_2d = vector_2d / length_2d
 
         return cls(
-            index=index,
-            p1=p1,
-            p2=p2,
+            index=i,
+            p1=p1, p2=p2,
+            p1_2d=p1_2d, p2_2d=p2_2d,
             vector=vector,
-            length=float(length),
-            unit_vector=unit_vector,
-            vector_xy=vector_xy,
-            length_xy=float(length_xy),
-            direction_xy=direction_xy,
-        )
-    
-    def analyze_wind(
-        self,
-        wind_from: np.ndarray,
-        surface_normal: np.ndarray,
-        tol: float = 1e-6,
-    ):
-        p1_pos = np.dot(self.p1, wind_from)
-        p2_pos = np.dot(self.p2, wind_from)
+            length=length,
+            direction=direction,
+            vector_2d=vector_2d,
+            length_2d=length_2d,
+            direction_2d=direction_2d,
 
-        self.front_positions = (
-            max(p1_pos, p2_pos),
-            min(p1_pos, p2_pos),
         )
 
-        outward_normal = np.cross(
-            self.unit_vector,
-            surface_normal
-        )
+    # ------------------------------------------------------------------
+    # Geometrik karşılaştırma (rüzgardan bağımsız)
+    # ------------------------------------------------------------------
 
-        norm = np.linalg.norm(outward_normal)
-
-        if norm < 1e-12:
-            self.exposed = False
-            return
-
-        outward_normal /= norm
-
-        exposure = np.dot(outward_normal, wind_from)
-
-        self.exposed = exposure > tol
-
-        cos_angle = np.clip(
-            abs(np.dot(self.unit_vector, wind_from)),
-            -1.0,
-            1.0
-        )
-
-        self.angle = float(
-            np.degrees(np.arccos(cos_angle))
-        )
-        
-    def check_leading(
-        self,
-        best_positions: Tuple[float, float],
-        tol: float = 1e-6,
-    ) -> bool:
-
-        if not self.exposed:
-            self.leading = False
-            return False
-
-        if self.front_positions is None:
-            self.leading = False
-            return False
-
-        self.leading = (
-            abs(self.front_positions[0] - best_positions[0]) <= tol
-            and
-            abs(self.front_positions[1] - best_positions[1]) <= tol
-        )
-
-        return self.leading
-    
-    def same_axis_xy(
+    def same_axis_2d(
         self,
         other: "Edge",
         angle_tol: float = 2.0,
         distance_tol: float = 1e-6,
     ) -> bool:
-
-        d1 = self.direction_xy
-        d2 = other.direction_xy
-
+        d1, d2 = self.direction_2d, other.direction_2d
         if d1 is None or d2 is None:
             return False
 
-        dot = np.clip(abs(np.dot(d1, d2)), -1.0, 1.0)
-        angle = np.degrees(np.arccos(dot))
-
-        if angle > angle_tol:
+        dot = float(np.clip(abs(np.dot(d1, d2)), -1.0, 1.0))
+        if np.degrees(np.arccos(dot)) > angle_tol:
             return False
 
         normal = np.array([-d1[1], d1[0]])
-
-        distance = abs(
-            np.dot(other.p1[:2] - self.p1[:2], normal)
-        )
-
+        distance = abs(float(np.dot(other.p1[:2] - self.p1[:2], normal)))
         return distance <= distance_tol
-    
-    def is_same_edge(
-        self,
-        other: "Edge",
-        tol: float = 1e-6,
-    ) -> bool:
 
+    def is_same_edge(self, other: "Edge", tol: float = 1e-6) -> bool:
         return (
             np.allclose(self.p1, other.p1, atol=tol)
-            and
-            np.allclose(self.p2, other.p2, atol=tol)
+            and np.allclose(self.p2, other.p2, atol=tol)
         ) or (
             np.allclose(self.p1, other.p2, atol=tol)
-            and
-            np.allclose(self.p2, other.p1, atol=tol)
-        )
-    
-    def _analyze_edges(self, w, building=None):
-
-        w_3d = np.asarray(w, dtype=float)
-        w_norm = np.linalg.norm(w_3d)
-
-        if w_norm < 1e-12:
-            return
-
-        wind_from = -(w_3d / w_norm)
-
-        surface_normal = self.normal_unit
-        tol = 1e-6
-
-        self_position = np.dot(
-            self.centroid,
-            wind_from
+            and np.allclose(self.p2, other.p1, atol=tol)
         )
 
-        # 1. Her kenarın kendi rüzgâr analizini yap
+    def reset_analysis(self) -> None:
+        """Rüzgar analizine bağlı alanları sıfırla."""
+        self.pos_front = None
+        self.pos_back = None
+        self.angle = None
+        self.exposed = False
+        self.leading = False
+        self.vertical = (self.direction_2d is None)
+        self.shared = []
+        self.same_axis = []
+
+class EdgeAnalyzer:
+    """
+    Tek bir yüzeyin kenarlarını rüzgar doğrultusuna göre analiz eder.
+
+    Bu sınıf yalnızca LOKAL analiz yapar.
+
+    Üretilen temel bilgiler:
+        edge.exposed
+        edge.leading
+        edge.pos_front
+        edge.pos_back
+        edge.angle
+        edge.vertical
+
+    Başka yüzeylerle karşılaştırma yapılmaz.
+    global_leading hesabı Building seviyesinde, bütün yüzeyler
+    lokal olarak analiz edildikten sonra yapılmalıdır.
+    """
+
+    def __init__(
+        self,
+        edges: Dict[int, "Edge"],
+        surface_normal: np.ndarray,
+        is_ccw: bool,
+        wind_relation= str,   # "WINDWARD" / "LEEWARD" / "PARALLEL"
+        tol: float = 1e-6,
+    ):
+        self.edges = edges
+        self.surface_normal = np.asarray(
+            surface_normal,
+            dtype=float
+        )
+        self.is_ccw = bool(is_ccw)
+        self.wind_relation = wind_relation
+        self.tol = float(tol)
+
+        self._wind_to_2d: Optional[np.ndarray] = None
+
+    # ------------------------------------------------------------------
+    # PUBLIC
+    # ------------------------------------------------------------------
+
+    def analyze(self, wind_vector, building, current_surface_name):
+        """
+        Yüzeyin bütün kenarlarını lokal olarak analiz eder.
+
+        wind_vector:
+            Rüzgarın hareket yönü.
+            Örneğin [1, 0, 0] -> +X
+                     [0, 1, 0] -> +Y
+
+        Döndürür:
+            self.edges
+        """
+
+        wind_to = self._normalize_wind(wind_vector)
+
+        if wind_to is None:
+            return {}
+
+        self._wind_to_2d = wind_to
+
+        # Önce bütün kenarların mevcut analiz sonuçlarını temizle.
         for edge in self.edges.values():
-            edge.analyze_wind(
-                wind_from,
-                surface_normal,
-                tol=tol
+            edge.reset_analysis()
+
+        # 1. Her kenarın kendi geometrik özellikleri.
+        for edge in self.edges.values():
+            self._compute_edge_metrics(edge)
+
+        # 2. Exposed kenarlar arasından lokal hücum kenarını bul.
+        self._mark_leading()
+
+        # --------------------------------------------------------------
+        # 3) Diğer çatılarla karşılaştır
+        # --------------------------------------------------------------
+
+        if building is not None:
+            self._find_shared_and_same_axis(
+                building,
+                current_surface_name,
             )
 
-        # 2. Leading kenarları bul
-        valid_edges = [
-            edge for edge in self.edges.values()
-            if edge.front_positions is not None
+        return self.edges
+
+    # ------------------------------------------------------------------
+    # EDGE METRICS
+    # ------------------------------------------------------------------
+
+    def _compute_edge_metrics(self, edge):
+        """
+        Kenarın rüzgara göre temel geometrik özelliklerini hesaplar.
+        """
+
+        # XY doğrultusu olmayan kenar.
+        if edge.direction_2d is None:
+            pos1 = float(
+                np.dot(edge.p1[:2], self._wind_to_2d)
+            )
+
+            edge.pos_front = pos1
+            edge.pos_back = pos1
+            edge.angle = 90.0
+            edge.exposed = False
+            edge.vertical = True
+
+            return
+
+        p1 = np.asarray(edge.p1[:2], dtype=float)
+        p2 = np.asarray(edge.p2[:2], dtype=float)
+
+        # Rüzgar doğrultusundaki konumlar.
+        s1 = float(np.dot(p1, self._wind_to_2d))
+        s2 = float(np.dot(p2, self._wind_to_2d))
+
+        edge.pos_front_pt = edge.p1_2d if s1 <= s2 else edge.p2_2d
+        edge.pos_front = min(s1, s2)
+        edge.pos_back = max(s1, s2)
+
+        # Kenar doğrultusu ile rüzgar doğrultusu arasındaki açı.
+        direction = np.asarray(
+            edge.direction_2d,
+            dtype=float
+        )
+
+        cos_a = float(
+            np.clip(
+                abs(np.dot(direction, self._wind_to_2d)),
+                -1.0,
+                1.0,
+            )
+        )
+
+        edge.angle = float(
+            np.degrees(np.arccos(cos_a))
+        )
+
+        # Yüzey sınırının rüzgara bakan tarafı mı?
+        edge.exposed = self._is_exposed(edge)
+
+        edge.vertical = False
+
+    # ------------------------------------------------------------------
+    # EXPOSED
+    # ------------------------------------------------------------------
+
+    def _is_exposed(self, edge) -> bool:
+        """
+        Kenarın yüzeyin rüzgara bakan sınırında olup olmadığını belirler.
+
+        wind_to:
+            Rüzgarın hareket yönüdür.
+
+        CCW polygon:
+            dış normal yönü açısından
+            cross(edge, wind_to) > 0
+
+        CW polygon:
+            cross(edge, wind_to) < 0
+        """
+
+        e = (
+            np.asarray(edge.p2[:2], dtype=float)
+            - np.asarray(edge.p1[:2], dtype=float)
+        )
+
+        w = self._wind_to_2d
+
+        cross = (
+            e[0] * w[1]
+            - e[1] * w[0]
+        )
+
+        log_= f"edge log...: index: {edge.index} p1={edge.p1}, p1={edge.p2}\n"
+        log_+= f"p1_2d={edge.p1_2d}, p1={edge.p2_2d}\n"
+        log_+=f"wind_to_2d: {self._wind_to_2d}\n"
+        log_+=f"is_ccw: {self.is_ccw}\n"
+        log_+=f"cross: {cross}"
+
+
+        edge.log= log_
+        edge.wind_to_2d= self._wind_to_2d
+
+        if self.is_ccw:
+            return cross > self.tol
+
+        return cross < -self.tol
+
+    # ------------------------------------------------------------------
+    # LEADING
+    # ------------------------------------------------------------------
+
+    def _mark_leading(self):
+        exposed = [
+            e for e in self.edges.values()
+            if e.exposed
         ]
 
-        if not valid_edges:
+        if not exposed:
             return
 
-        best_positions = max(
-            edge.front_positions
-            for edge in valid_edges
+        leading = min(
+            exposed,
+            key=lambda e: (
+                e.pos_back,
+                -e.angle
+            )
         )
 
-        for edge in valid_edges:
-            edge.check_leading(
-                best_positions,
-                tol=tol
+        for e in exposed:
+            e.leading = (
+                abs(e.pos_back - leading.pos_back) <= self.tol
+                and abs(e.angle - leading.angle) <= self.tol
             )
 
-        # 3. Diğer yüzeylerle ilişkileri bul
-        if building is not None:
+    # ------------------------------------------------------------------
+    # UTILITIES
+    # ------------------------------------------------------------------
 
-            for polygon_name, surface in building.surfaces_items.items():
+    @staticmethod
+    def _normalize_wind(wind_vector):
+        """
+        3D rüzgar vektörünü XY düzleminde normalize eder.
 
-                if polygon_name == self.polygon_name:
-                    continue
+        wind_vector rüzgarın hareket yönüdür.
+        """
 
-                if surface.surface_type != SurfaceType.ROOF:
-                    continue
+        if wind_vector is None:
+            return None
 
-                other_position = np.dot(
-                    surface.centroid,
-                    wind_from
-                )
+        w = np.asarray(
+            wind_vector,
+            dtype=float,
+        )
 
-                for edge in self.edges.values():
+        if w.size < 2:
+            return None
 
-                    for other_edge in surface.edges.values():
+        w2 = w[:2]
 
-                        if not edge.same_axis_xy(other_edge):
-                            continue
+        norm = np.linalg.norm(w2)
 
-                        edge.same_axis.append({
-                            "surface": polygon_name,
-                            "surface_edge": other_edge.index,
-                            "surface_angle": surface.angle,
-                            "direction_xy": other_edge.direction_xy,
-                            "same_edge": edge.is_same_edge(
-                                other_edge,
-                                tol=tol
-                            ),
-                        })
+        if norm < 1e-12:
+            return None
 
-                        if edge.is_same_edge(
-                            other_edge,
-                            tol=tol
-                        ):
-                            edge.shared.append({
-                                "surface": polygon_name,
-                                "surface_edge": other_edge.index,
-                                "surface_angle": surface.angle,
-                                "upstream": (
-                                    other_position >
-                                    self_position + tol
-                                ),
-                            })
-i= 0    
-p1= np.array([0,0,0])
-p2= np.array([12,0,0])
-Edge.from_points(i, p1, p2)
+        return w2 / norm
+
+    # ------------------------------------------------------------------
+    # 4) SHARED / SAME_AXIS
+    # ------------------------------------------------------------------
+
+    def _find_shared_and_same_axis(
+        self,
+        building: Any,
+        current_surface_name: str,
+    ) -> None:
+        """
+        Diğer çatı yüzeyleriyle aynı eksen üzerindeki ve ortak olan
+        kenarları belirler.
+        """
+
+        surfaces_items = getattr(
+            building,
+            "surfaces_items",
+            {},
+        ) or {}
+
+        other_roofs: List[Tuple[str, Any]] = []
+
+        for name, surface in surfaces_items.items():
+
+            if name == current_surface_name:
+                continue
+
+            surface_type = getattr(
+                surface.surface_type,
+                "value",
+                surface.surface_type,
+            )
+
+            if surface_type != "ROOF":
+                continue
+
+            other_roofs.append(
+                (name, surface)
+            )
+
+        if not other_roofs:
+            return
+
+        # --------------------------------------------------------------
+        # Her kenarı diğer çatılarla karşılaştır
+        # --------------------------------------------------------------
+
+        for edge in self.edges.values():
+
+            if edge.direction_2d is None:
+                continue
+
+            for other_name, other_surface in other_roofs:
+
+                for other_edge in other_surface.edges.values():
+
+                    # Aynı fiziksel XY ekseninde değillerse geç
+                    if not edge.same_axis_2d(other_edge):
+                        continue
+
+                    is_same = edge.is_same_edge(
+                        other_edge,
+                        tol=self.tol,
+                    )
+
+                    entry = {
+                        "surface": other_name,
+                        "surface_edge": other_edge.index,
+                        "surface_angle": getattr(
+                            other_surface,
+                            "angle",
+                            None,
+                        ),
+                        "direction_2d": other_edge.direction_2d,
+                        "same_edge": is_same,
+                    }
+
+                    edge.same_axis.append(entry)
+
+                    if is_same:
+                        edge.shared.append(entry)
