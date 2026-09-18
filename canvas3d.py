@@ -6,8 +6,8 @@ import math
 import traceback
 import numpy as np
 import logging
-from PySide6.QtCore import QPoint, Qt, QPointF, Signal
-from PySide6.QtGui import QColor, QPainter, QPen, QPolygonF, QPainterPath, QKeySequence, QShortcut, QAction
+from PySide6.QtCore import QBuffer, QByteArray, QIODevice, QPoint, QRectF, Qt, QPointF, Signal
+from PySide6.QtGui import QColor, QImage, QPainter, QPen, QPixmap, QPolygonF, QPainterPath, QKeySequence, QShortcut, QAction
 from PySide6.QtWidgets import (QGraphicsView, QGraphicsScene, QGraphicsPathItem, QMenu, QMessageBox)
 
 from domains import AxisItem, Camera3D, ElementPropertiesDialog, PointItem, Vec3, PolygonItem, ZoneItem, FrameItem, EdgeItem, ShowObjectsDialog
@@ -2313,6 +2313,65 @@ class View3D(QGraphicsView):
             "frames": self.frames,
             "zones": self.zones,
         }
+
+    
+    def render_to_pixmap(self, scale: float = 2.0, transparent: bool = False) -> QPixmap:
+        """
+        Sahneyi yüksek çözünürlüklü bir QPixmap'e çizer.
+
+        Parameters
+        ----------
+        scale : float
+            Piksel yoğunluğu çarpanı (2.0 → retina/print kalitesi).
+        transparent : bool
+            True ise arka plan şeffaf olur (rapora gömmek için ideal).
+        """
+        # Sahnenin sınırlarını al
+        scene = self.scene
+        print(f"[render_to_pixmap] scene={scene}, items={len(scene.items()) if scene else 'N/A'}")
+        if scene is None:
+            raise RuntimeError("QGraphicsScene atanmamış!")
+        rect = self.scene.itemsBoundingRect()
+        if rect.isEmpty():
+            rect = self.sceneRect()
+
+        w = int(rect.width() * scale)
+        h = int(rect.height() * scale)
+
+        image = QImage(w, h, QImage.Format_ARGB32)
+        image.fill(Qt.transparent if transparent else Qt.white)
+
+        painter = QPainter(image)
+        painter.setRenderHint(QPainter.Antialiasing, True)
+        painter.setRenderHint(QPainter.SmoothPixmapTransform, True)
+        # Sahneyi hedef alana çiz
+        self.scene.render(painter, target=QRectF(0, 0, w, h), source=rect)
+        painter.end()
+
+        return QPixmap.fromImage(image)
+
+    def render_to_png_bytes(
+        self, scale: float = 2.0, transparent: bool = False
+    ) -> bytes:
+        """Sahneyi PNG byte'ları olarak döner (rapor için)."""
+        pixmap = self.render_to_pixmap(scale=scale, transparent=transparent)
+
+        ba = QByteArray()
+        buf = QBuffer(ba)
+        buf.open(QIODevice.WriteOnly)
+        pixmap.save(buf, "PNG")
+        buf.close()
+
+        return bytes(ba)
+
+    # ------------------------------------------------------------
+    # Panoya kopyala
+    # ------------------------------------------------------------
+
+    def copy_to_clipboard(self, scale: float = 2.0, transparent: bool = False):
+        """Sahneyi panoya resim olarak kopyalar."""
+        pixmap = self.render_to_pixmap(scale=scale, transparent=transparent)
+        QApplication.clipboard().setPixmap(pixmap)
         
 if __name__ == "__main__":
     import sys
