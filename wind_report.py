@@ -88,7 +88,7 @@ def create_cpe_summary_df(building) -> ReportDataFrame:
         )
 
     df = pd.DataFrame(rows)
-    df = df.sort_values("Zone")
+    df = df.sort_values("Bölge")
 
     desc = f"""
     Dış ve Net Basınç Katsayıları Özeti (TS EN 1991-1-4)
@@ -135,7 +135,7 @@ def create_wind_force_df(building) -> ReportDataFrame:
 
         rows.append(
             {
-                "Zone": zone.label,
+                "Bölge": zone.label,
                 "Type": _TYPE_ABBR.get(zone.table_type, zone.table_type),
                 "Pitch": round(float(zone.pitch), 3),
                 "F10PMn (kN/m²)": round(_f(cpe10_min, cpi_pos), 3),
@@ -150,7 +150,7 @@ def create_wind_force_df(building) -> ReportDataFrame:
         )
 
     df = pd.DataFrame(rows)
-    df = df.sort_values("Zone")
+    df = df.sort_values("Bölge")
 
     desc = f"""
     Rüzgar Yükü ve Tasarım Basınçları (TS EN 1991-1-4)
