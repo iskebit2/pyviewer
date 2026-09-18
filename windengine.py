@@ -813,9 +813,12 @@ class BuildingWindEngine:
             return "H" if label == "M" else label
 
         if wind_relation == "LEEWARD":
+            
             if table_type == "WALL":
                 return "E"
             label = reg_name[:1]
+            if table_type == "MONOPITCH":
+                return label
             if label == "M":
                 return "I"
             if label == "L":
