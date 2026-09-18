@@ -817,9 +817,11 @@ class BuildingWindEngine:
             if table_type == "WALL":
                 return "E"
             label = reg_name[:1]
-            if table_type == "MONOPITCH":
-                return "H"
+            
             if label == "M":
+              if table_type == "MONOPITCH":
+                return "H"
+              else:
                 return "I"
             if label == "L":
                 return "J"
