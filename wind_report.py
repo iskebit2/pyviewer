@@ -69,7 +69,7 @@ def create_cpe_summary_df(building) -> ReportDataFrame:
 
         rows.append(
             {
-                "Zone": zone.label,
+                "Bölge": zone.label,
                 "Tablo": zone.table_type,
                 "Pitch (or h/d)": round(float(zone.pitch), 3),
                 "CPE10": round(cpe10_min, 3),
