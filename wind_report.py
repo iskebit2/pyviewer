@@ -242,6 +242,262 @@ W_LIST = {
     "y-": [0, -1, 0],
 }
 
+
+
+
+
+def show_zones(building):
+   import matplotlib
+   import matplotlib.pyplot as plt
+   from mpl_toolkits.mplot3d.art3d import Poly3DCollection
+   
+    all_wind_zones = getattr(building, "all_wind_zones", None)
+    if not all_wind_zones:
+        return
+
+    # ---- Tüm koordinatları düzleştir ----
+    all_polys = []
+    for poly_zones in all_wind_zones.values():
+        for zone_obj in poly_zones:
+            all_polys.append(np.asarray(zone_obj.coords, dtype=float))
+
+    if not all_polys:
+        raise ValueError("all_wind_zones boş!")
+
+    # Calculate building bounding box for accurate arrow placement
+    building_points_coords = np.array(list(building.points.values()))
+    min_x_b, min_y_b, min_z_b = building_points_coords.min(axis=0)
+    max_x_b, max_y_b, max_z_b = building_points_coords.max(axis=0)
+
+    # Calculate midpoints of the building's main faces
+    mid_x_b_face = (min_x_b + max_x_b) / 2
+    mid_y_b_face = (min_y_b + max_y_b) / 2
+    mid_z_b_face = (min_z_b + max_z_b) / 2
+
+    # --- Existing code for overall coordinates for plotting limits --- (kept for visualization range)
+    all_coords = np.vstack(all_polys)
+
+    # Koordinat aralıkları
+    x_range = all_coords[:, 0].ptp()
+    y_range = all_coords[:, 1].ptp()
+    z_range = all_coords[:, 2].ptp()
+
+    # Canvas oranı: X:Y
+    aspect_xy = x_range / max(y_range, 1e-9)
+
+    base_height = 8
+    fig_width = base_height * aspect_xy
+
+    # Aşırı genişlikleri sınırla
+    fig_width = np.clip(fig_width, 8, 16)
+    print(f"figsize=({fig_width}, {base_height})")
+    fig = plt.figure(figsize=(fig_width, base_height), dpi=150)
+    ax = fig.add_subplot(111, projection="3d")
+
+    ax.set_box_aspect([x_range, y_range, z_range])
+    
+    # ---- Eksen aralıkları ----
+    # x_range, y_range, z_range already calculated above
+    # max_range already calculated above
+
+    mid_x_plot = (all_coords[:, 0].max() + all_coords[:, 0].min()) / 2
+    mid_y_plot = (all_coords[:, 1].max() + all_coords[:, 1].min()) / 2
+    mid_z_plot = (all_coords[:, 2].max() + all_coords[:, 2].min()) / 2
+
+    ax.set_xlim(mid_x_plot - max_range / 2, mid_x_plot + max_range / 2)
+    ax.set_ylim(mid_y_plot - max_range / 2, mid_y_plot + max_range / 2)
+    ax.set_zlim(mid_z_plot - max_range / 2, mid_z_plot + max_range / 2)
+    ax.set_box_aspect([1, 1, 1])
+
+    # ---- CPE10 değerlerini topla ve normalize et ----
+    cpe10_values = []
+    for poly_zones in all_wind_zones.values():
+        for zone_obj in poly_zones:
+            cpe = zone_obj.cpe10
+            if isinstance(cpe, tuple):
+                cpe10_values.append(cpe[0])
+            else:
+                cpe10_values.append(cpe)
+
+    neg_cpe = [v for v in cpe10_values if v < 0]
+    pos_cpe = [v for v in cpe10_values if v >= 0]
+
+    # Avoid division by zero if no negative or positive cpe values
+    min_neg_abs = abs(min(neg_cpe)) if neg_cpe else 1e-6
+    max_pos = max(pos_cpe) if pos_cpe else 1e-6
+
+    neg_cmap = matplotlib.colormaps.get_cmap('Blues')
+    pos_cmap = matplotlib.colormaps.get_cmap('Reds')
+
+    # ---- Poligonları çiz ve etiketle ----
+    for poly_zones in all_wind_zones.values():
+        for zone_obj in poly_zones:
+            coords = np.asarray(zone_obj.coords, dtype=float)
+            zlabel = zone_obj.label
+
+            cpe = zone_obj.cpe10
+            current_cpe = cpe[0] if isinstance(cpe, tuple) else cpe
+
+            if current_cpe < 0:
+                norm_val = abs(current_cpe) / min_neg_abs
+                facecolor = neg_cmap(norm_val)
+            else:
+                norm_val = current_cpe / max_pos
+                facecolor = pos_cmap(norm_val)
+
+            col = Poly3DCollection(
+                [coords],
+                alpha=0.6,
+                facecolor=facecolor,
+                edgecolor='black',
+                linewidths=1.0,
+            )
+            ax.add_collection3d(col)
+
+            pts = coords
+            if len(pts) > 1 and np.allclose(pts[0], pts[-1], atol=1e-9):
+                pts = pts[:-1]
+
+            centroid = pts.mean(axis=0)
+            text = f"{zlabel} ({current_cpe:.2f})"
+
+            ax.text(
+                centroid[0],
+                centroid[1],
+                centroid[2],
+                text,
+                fontsize=8,
+                fontweight='bold',
+                color='black',
+                ha='center',
+                va='center',
+                bbox=dict(
+                    boxstyle='round,pad=0.2',
+                    facecolor='white',
+                    edgecolor='gray',
+                    alpha=0.7,
+                    linewidth=0.5,
+                ),
+                zorder=10,
+            )
+
+    # ---- Rüzgar Vektörü ----
+    wind_vector = np.array(building.w_dir)
+    w_norm = np.linalg.norm(wind_vector)
+    # Ensure w_norm is not zero to prevent division by zero
+    wind_dir_norm = wind_vector / w_norm if w_norm > 0 else np.array([1.0, 0.0, 0.0])
+
+    # Determine arrow start based on wind direction and building face
+    arrow_start_x, arrow_start_y, arrow_start_z = 0.0, 0.0, 0.0
+    arrow_length = (max(max_x_b - min_x_b, max_y_b - min_y_b, max_z_b - min_z_b)) / 3 # Length relative to building size
+
+    # Place arrow on the center of the relevant building face
+    if np.array_equal(wind_vector, [1, 0, 0]): # Wind from x- to x+ (hits min_x face)
+        arrow_start_x = min_x_b
+        arrow_start_y = mid_y_b_face
+        arrow_start_z = mid_z_b_face
+    elif np.array_equal(wind_vector, [-1, 0, 0]): # Wind from x+ to x- (hits max_x face)
+        arrow_start_x = max_x_b
+        arrow_start_y = mid_y_b_face
+        arrow_start_z = mid_z_b_face
+    elif np.array_equal(wind_vector, [0, 1, 0]): # Wind from y- to y+ (hits min_y face)
+        arrow_start_x = mid_x_b_face
+        arrow_start_y = min_y_b
+        arrow_start_z = mid_z_b_face
+    elif np.array_equal(wind_vector, [0, -1, 0]): # Wind from y+ to y- (hits max_y face)
+        arrow_start_x = mid_x_b_face
+        arrow_start_y = max_y_b
+        arrow_start_z = mid_z_b_face
+    else:
+        # Fallback for other wind directions (e.g., diagonal, z-direction)
+        # Using the mid_point of the entire plotted area, slightly offset
+        arrow_start_x = mid_x_plot - max_range / 2 - arrow_length # Original logic might be better here for generic cases
+        arrow_start_y = mid_y_plot
+        arrow_start_z = mid_z_plot
+
+
+    ax.quiver(
+        arrow_start_x,
+        arrow_start_y,
+        arrow_start_z,
+        wind_dir_norm[0] * arrow_length,
+        wind_dir_norm[1] * arrow_length,
+        wind_dir_norm[2] * arrow_length,
+        color='red',
+        arrow_length_ratio=0.3,
+        linewidth=2,
+    )
+
+    # ================================================================
+    # TÜM ARAYÜZ VE EKSEN BİLEŞENLERİNİ TEMİZLE
+    # ================================================================
+    ax.axis('off')
+    ax.set_xticks([])
+    ax.set_yticks([])
+    ax.set_zticks([])
+    ax.grid(False)
+
+    # 3D kutu çizgilerini kaldır
+    ax.xaxis.pane.fill = False
+    ax.yaxis.pane.fill = False
+    ax.zaxis.pane.fill = False
+    ax.xaxis.pane.set_edgecolor('none')
+    ax.yaxis.pane.set_edgecolor('none')
+    ax.zaxis.pane.set_edgecolor('none')
+
+    # ---- Belleğe (BytesIO) kaydet ve akışı döndür ----
+    img_stream = io.BytesIO()
+    plt.savefig(
+        img_stream,
+        format='png',
+        bbox_inches='tight',
+        pad_inches=0,
+        transparent=True,
+        dpi=300,
+    )
+    plt.close(fig)
+
+    img_stream.seek(0)
+    return img_stream
+
+def all_wind_report(points, polygons):
+   from windengine import BuildingWindEngine
+   doc = myDocument()
+   doc.apply_visual_settings()
+   doc.add_heading_numbered("RÜZGAR ANALİZİ", level=1)
+   sayac=0
+   for w in W_LIST:
+      w_dir= W_LIST[w]
+      #print(f"\n{'=' * 40}\nWIND: {w}\n{'=' * 40}")
+      building = BuildingWindEngine(
+         points=points,
+         polygons=polygons,
+         v_b0=28.0,
+         terrain="Kategori III",
+         w_dir=w_dir,
+         scale_factor=1.0,
+     )
+      #summary = building.get_summary()
+      building.all_wind_zones = building.analysis_all_roof_wind(w_dir) # Uncommented and assigned
+      #print(json.dumps(summary, indent=2, ensure_ascii=False, default=str))
+      
+      if sayac==0:
+         parameters_report = get_parameters_report(building)
+         parameters_report.save_to_docx(doc,level=2)
+         sayac+=1
+      
+      img_stream = show_zones(building)
+      cpe_report = create_cpe_summary_df(building)
+      wind_force_report = create_wind_force_df(building)
+      
+      doc.add_heading_numbered(f"RÜZGAR YÖN: {w} : {w_dir}", level=2)
+      doc.doc.add_picture(img_stream, width=Cm(15.0))
+      
+      cpe_report.save_to_docx(doc,level=2)
+      wind_force_report.save_to_docx(doc,level=2)
+
+   return doc
+
 def get_report(
     building,
     image_bytes: Optional[bytes] = None,
