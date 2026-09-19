@@ -3,7 +3,7 @@ import numpy as np
 from dataclasses import dataclass
 from enum import Enum
 from typing import List, Dict, Tuple, Optional, Union, Any
-from edge import Edge, EdgeAnalyzer
+from windcalc.edge import Edge, EdgeAnalyzer
 
 EPS = 1.0e-9
 

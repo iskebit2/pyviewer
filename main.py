@@ -1,24 +1,16 @@
 # main.py
 import sys
-import logging
 import traceback
 from typing import Any, Dict
 import numpy as np
 
-from PySide6.QtWidgets import (
-    QApplication, QMainWindow, QWidget, QVBoxLayout, QTextEdit
-)
-from PySide6.QtCore import Qt
-
-from canvas3d import View3D
 
 from windcalc.windengine import BuildingWindEngine
 from windcalc.windplane import WindPlane
-from menu_bar import MenuBar
-from button_bar import ButtonBar
+from ui.menu_bar import MenuBar
+from ui.button_bar import ButtonBar
 from ui.data_dialog import DataDialog
 
-logging.basicConfig(level=logging.DEBUG, format="%(levelname)s - %(message)s")
 
 def dict_tree(data, indent=""):
     lines = []
@@ -52,6 +44,16 @@ def get_polygon_coords(polygon_points, points, scale_=1000.0):
     return np.array(coords)
 
 
+
+from PySide6.QtWidgets import (
+    QApplication, QMainWindow, QWidget, QVBoxLayout, QTextEdit
+)
+from PySide6.QtCore import Qt, Signal
+
+from core.canvas3d import View3D
+import logging
+logging.basicConfig(level=logging.DEBUG, format="%(levelname)s - %(message)s")
+
 class QTextEditHandler(logging.Handler):
     def __init__(self, text_edit):
         super().__init__()
@@ -61,8 +63,8 @@ class QTextEditHandler(logging.Handler):
         
         self.text_edit.append(self.format(record))
 
-
 class MainWindow(QMainWindow):
+    wind_vector_changed = Signal(object)
     def __init__(self):
         super().__init__()
         self.setWindowTitle("3D Viewer")
@@ -79,7 +81,7 @@ class MainWindow(QMainWindow):
 
         # UI
         self.setup_ui()
-        self.setup_logging()
+        
 
         # Sinyaller
         self.view3d.element_selected.connect(self.handle_selection)
@@ -87,9 +89,30 @@ class MainWindow(QMainWindow):
         if hasattr(self.view3d, 'multi_selection_changed'):
             self.view3d.multi_selection_changed.connect(self.update_buttons)
 
-        
+        self.wind_vector_changed.connect(self.on_wind_vector_changed)
+        self.wind_vector_changed.emit(self.wind_vector)
+
+    def setup_logging(self):
+        handler = QTextEditHandler(self.log_box)
+        handler.setFormatter(logging.Formatter("%(levelname)s: %(message)s"))
+        logging.getLogger().addHandler(handler)     
 
     def setup_ui(self):
+        # Log
+        self.log_box = QTextEdit()
+        self.log_box.setReadOnly(True)
+        self.log_box.setMaximumHeight(150)
+        self.log_box.setStyleSheet("""
+            QTextEdit {
+                background: #1e1e1e;
+                color: #d4d4d4;
+                font-family: monospace;
+                font-size: 11px;
+                border: 1px solid #3d3d3d;
+                border-radius: 4px;
+            }
+        """)
+        self.setup_logging()
         self.setMenuBar(MenuBar(self))
         central = QWidget()
         self.setCentralWidget(central)
@@ -118,26 +141,14 @@ class MainWindow(QMainWindow):
         # 3D View
         layout.addWidget(self.view3d, 1)
 
-        # Log
-        self.log_box = QTextEdit()
-        self.log_box.setReadOnly(True)
-        self.log_box.setMaximumHeight(150)
-        self.log_box.setStyleSheet("""
-            QTextEdit {
-                background: #1e1e1e;
-                color: #d4d4d4;
-                font-family: monospace;
-                font-size: 11px;
-                border: 1px solid #3d3d3d;
-                border-radius: 4px;
-            }
-        """)
         layout.addWidget(self.log_box)
 
-    def setup_logging(self):
-        handler = QTextEditHandler(self.log_box)
-        handler.setFormatter(logging.Formatter("%(levelname)s \n %(message)s"))
-        logging.getLogger().addHandler(handler)
+    def on_wind_vector_changed(self, vector):
+        logging.info("Wind vec... {vector}")
+        self.statusBar().showMessage(
+            f"Wind dir: {vector}"
+        )
+
 
     # ==================== BUTON DURUM GÜNCELLEME ====================
 
@@ -340,7 +351,7 @@ class MainWindow(QMainWindow):
                 self.wind_vector = np.array([1.0, 0.0, 0.0])
             else:
                 self.wind_vector = wind_vec
-                logging.info(f"Rüzgar yönü güncellendi: {self.wind_vector}")
+                self.wind_vector_changed.emit(self.wind_vector)
 
             terrain_data = ARAZI[self.terrain]
             self.z0 = terrain_data["z0"]
@@ -407,10 +418,32 @@ class MainWindow(QMainWindow):
         return p1,p2,perp
 
     # ==================== BİNA İŞLEMLERİ ====================
-
     def building_wind_calc(self):
         """Bina rüzgar yükü hesapla"""
+
+        missing = []
+
+        if not self.view3d.points:
+            missing.append("points")
+
+        if not self.view3d.polygons:
+            missing.append("polygons")
+
+        if self.v_b0 is None:
+            missing.append("v_b0")
+
+        if self.terrain is None:
+            missing.append("terrain")
+
+        if self.wind_vector is None:
+            missing.append("wind_vector")
+
+        if missing:
+            logging.error("Eksik bilgi: %s", ", ".join(missing))
+            return
+
         self.statusBar().showMessage("Building Wind Calc...")
+
         self.building = BuildingWindEngine(
             points=self.view3d.points,
             polygons=self.view3d.polygons,
@@ -419,10 +452,9 @@ class MainWindow(QMainWindow):
             w_dir=self.wind_vector,
             scale_factor=1000.0
         )
+
         info = dict_tree(self.building.get_summary())
-
-        logging.info("Building Wind Calc...\n"+info)
-
+        logging.info("Building Wind Calc...\n%s", info)
     # ==================== ÖRNEK VERİ ====================
 
     def create_sample_data(self):

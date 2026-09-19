@@ -12,7 +12,6 @@ class MenuBar(QMenuBar):
         self.main_window = main_window
 
         self.setup_menu()
-        
 
     def setup_menu(self):
         """Menü çubuğunu oluştur"""
@@ -102,6 +101,7 @@ class MenuBar(QMenuBar):
         exit_action.setShortcut("Ctrl+Q")
         exit_action.triggered.connect(self.main_window.close)
 
+        logging.info("menu connected")
     # ==================== FILE MENÜSÜ FONKSİYONLARI ====================
     
     def new_file(self):
@@ -114,7 +114,7 @@ class MenuBar(QMenuBar):
             self.main_window.view3d.rebuild()
             self.main_window.current_file_path = None
             self.setWindowTitle("3D Viewer - Yeni Dosya")
-            QMessageBox.information(self, "Yeni Dosya", "Yeni dosya oluşturuldu!")
+            logging.info("Yeni Dosya", "Yeni dosya oluşturuldu!")
 
     def open_file(self):
         """Dosya aç"""
@@ -250,23 +250,24 @@ class MenuBar(QMenuBar):
         try:
             with open(file_path, 'r', encoding='utf-8') as f:
                 data = json.load(f)
-            
+
             self.main_window.view3d.set_data(
                 data.get('points', {}),
                 data.get('polygons', {}),
                 data.get('lines', {}),
                 data.get('frames', {})
             )
-            
+
             self.main_window.current_file_path = file_path
-            self.setWindowTitle(f"3D Viewer - {QFileInfo(file_path).fileName()}")
+            self.setWindowTitle(
+                f"3D Viewer - {QFileInfo(file_path).fileName()}"
+            )
             self.main_window.view3d.zoom_extents()
-            
-            QMessageBox.information(self, "Başarılı", f"Dosya başarıyla açıldı: {file_path}")
-            
+
+            logging.info(f"Dosya başarıyla açıldı: {file_path}")
+
         except Exception as e:
-            logging.error(f"Error loading file: {e}")
-            QMessageBox.critical(self, "Hata", f"Dosya açılamadı: {str(e)}")
+            logging.error(f"Dosya açılamadı: {e}")
     
     def _save_to_file(self, file_path):
         """Veriyi dosyaya kaydet"""
@@ -284,11 +285,11 @@ class MenuBar(QMenuBar):
             self.main_window.current_file_path = file_path
             self.setWindowTitle(f"3D Viewer - {QFileInfo(file_path).fileName()}")
             
-            QMessageBox.information(self, "Başarılı", f"Dosya başarıyla kaydedildi: {file_path}")
+            logging.info("Başarılı", f"Dosya başarıyla kaydedildi: {file_path}")
             
         except Exception as e:
             logging.error(f"Error saving file: {e}")
-            QMessageBox.critical(self, "Hata", f"Dosya kaydedilemedi: {str(e)}")
+            logging.info("Hata", f"Dosya kaydedilemedi: {str(e)}")
     
     def _import_from_json(self, file_path):
         """JSON'dan içe aktar"""
@@ -303,11 +304,11 @@ class MenuBar(QMenuBar):
             self.main_window.view3d.rebuild()
             self.main_window.view3d.zoom_extents()
             
-            QMessageBox.information(self, "Başarılı", f"JSON dosyası içe aktarıldı: {file_path}")
+            logging.info("Başarılı", f"JSON dosyası içe aktarıldı: {file_path}")
             
         except Exception as e:
             logging.error(f"Error importing JSON: {e}")
-            QMessageBox.critical(self, "Hata", f"JSON içe aktarılamadı: {str(e)}")
+            logging.info("Hata", f"JSON içe aktarılamadı: {str(e)}")
     
     def _import_from_csv(self, file_path):
         """CSV'den içe aktar"""
@@ -332,13 +333,13 @@ class MenuBar(QMenuBar):
                 self.main_window.view3d.points.update(points)
                 self.main_window.view3d.rebuild()
                 self.main_window.view3d.zoom_extents()
-                QMessageBox.information(self, "Başarılı", f"{len(points)} nokta içe aktarıldı!")
+                logging.info("Başarılı", f"{len(points)} nokta içe aktarıldı!")
             else:
-                QMessageBox.warning(self, "Uyarı", "Hiçbir nokta içe aktarılamadı!")
+                logging.info("Uyarı", "Hiçbir nokta içe aktarılamadı!")
             
         except Exception as e:
             logging.error(f"Error importing CSV: {e}")
-            QMessageBox.critical(self, "Hata", f"CSV içe aktarılamadı: {str(e)}")
+            logging.info("Hata", f"CSV içe aktarılamadı: {str(e)}")
     
     def _import_from_obj(self, file_path):
         """OBJ'den içe aktar"""
@@ -391,15 +392,11 @@ class MenuBar(QMenuBar):
             self.main_window.view3d.rebuild()
             self.main_window.view3d.zoom_extents()
             
-            QMessageBox.information(
-                self, 
-                "Başarılı", 
-                f"OBJ içe aktarıldı!\n{len(points)} nokta, {len(polygons)} poligon"
-            )
+            logging.info("Başarılı", f"OBJ içe aktarıldı!\n{len(points)} nokta, {len(polygons)} poligon")
             
         except Exception as e:
             logging.error(f"Error importing OBJ: {e}")
-            QMessageBox.critical(self, "Hata", f"OBJ içe aktarılamadı: {str(e)}")
+            logging.info("Hata", f"OBJ içe aktarılamadı: {str(e)}")
     
     def _export_to_json(self, file_path):
         """JSON'a dışa aktar"""
@@ -414,11 +411,11 @@ class MenuBar(QMenuBar):
             with open(file_path, 'w', encoding='utf-8') as f:
                 json.dump(data, f, indent=2, ensure_ascii=False)
             
-            QMessageBox.information(self, "Başarılı", f"JSON'a dışa aktarıldı: {file_path}")
+            logging.info("Başarılı", f"JSON'a dışa aktarıldı: {file_path}")
             
         except Exception as e:
             logging.error(f"Error exporting JSON: {e}")
-            QMessageBox.critical(self, "Hata", f"JSON dışa aktarılamadı: {str(e)}")
+            logging.info("Hata", f"JSON dışa aktarılamadı: {str(e)}")
     
     def _export_to_obj(self, file_path):
         """OBJ'ye dışa aktar"""
@@ -446,11 +443,11 @@ class MenuBar(QMenuBar):
                     if len(indices) >= 3:
                         f.write(f"f {' '.join(str(idx) for idx in indices)}\n")
             
-            QMessageBox.information(self, "Başarılı", f"OBJ'ye dışa aktarıldı: {file_path}")
+            logging.info("Başarılı", f"OBJ'ye dışa aktarıldı: {file_path}")
             
         except Exception as e:
             logging.error(f"Error exporting OBJ: {e}")
-            QMessageBox.critical(self, "Hata", f"OBJ dışa aktarılamadı: {str(e)}")
+            logging.info("Hata", f"OBJ dışa aktarılamadı: {str(e)}")
     
     def _export_to_png(self, file_path):
         """PNG olarak dışa aktar"""
@@ -460,9 +457,9 @@ class MenuBar(QMenuBar):
             pixmap = self.main_window.view3d.grab()
             pixmap.save(file_path, "PNG")
             
-            QMessageBox.information(self, "Başarılı", f"PNG olarak kaydedildi: {file_path}")
+            logging.info("Başarılı", f"PNG olarak kaydedildi: {file_path}")
             
         except Exception as e:
             logging.error(f"Error exporting PNG: {e}")
-            QMessageBox.critical(self, "Hata", f"PNG kaydedilemedi: {str(e)}")
+            logging.info("Hata", f"PNG kaydedilemedi: {str(e)}")
 

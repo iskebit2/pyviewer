@@ -10,7 +10,7 @@ from PySide6.QtCore import QBuffer, QByteArray, QIODevice, QPoint, QRectF, Qt, Q
 from PySide6.QtGui import QColor, QImage, QPainter, QPen, QPixmap, QPolygonF, QPainterPath, QKeySequence, QShortcut, QAction
 from PySide6.QtWidgets import (QGraphicsView, QGraphicsScene, QGraphicsPathItem, QMenu, QMessageBox)
 
-from domains import AxisItem, Camera3D, ElementPropertiesDialog, PointItem, Vec3, PolygonItem, ZoneItem, FrameItem, EdgeItem, ShowObjectsDialog
+from core.domains import AxisItem, Camera3D, ElementPropertiesDialog, PointItem, Vec3, PolygonItem, ZoneItem, FrameItem, EdgeItem, ShowObjectsDialog
 
 logging.basicConfig(
     level=logging.INFO,
@@ -127,7 +127,7 @@ class View3D(QGraphicsView):
 
         # Eksenler
         self.axis_item = None
-        self.axis_length = 60  # Sabit piksel
+        self.axis_length = 40  # Sabit piksel
         self.show_axes = True
         
         self.axis_shortcut = QShortcut(QKeySequence("Ctrl+Shift+A"), self)

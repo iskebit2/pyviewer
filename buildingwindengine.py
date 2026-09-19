@@ -1,6 +1,6 @@
 from typing import Any, Dict, List, Optional, Tuple
-from zone import ARAZI_KATEGORILERI
-from windplane import WindPlane, SurfaceType
+from windcalc.zone import ARAZI_KATEGORILERI
+from windcalc.windplane import WindPlane, SurfaceType
 import numpy as np
 import math
 

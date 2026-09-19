@@ -19,8 +19,8 @@ from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
 
-from zone import Zone, TOL, EPS, ARAZI_KATEGORILERI
-from windplane import WindPlane, SurfaceType
+from windcalc.zone import Zone, TOL, EPS, ARAZI_KATEGORILERI
+from windcalc.windplane import WindPlane, SurfaceType
 
 
 # ================================================================

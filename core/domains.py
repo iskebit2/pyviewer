@@ -178,7 +178,7 @@ class AxisItem(QGraphicsObject):
         self.setFlag(QGraphicsItem.ItemIsMovable, False)
         
     def boundingRect(self):
-        r = self._length * 1.5
+        r = self._length * 1.0
         return QRectF(-r, -r, r * 2, r * 2)
     
     def paint(self, painter, option, widget=None):
@@ -213,26 +213,26 @@ class AxisItem(QGraphicsObject):
         # X ekseni - Kırmızı
         painter.setPen(QPen(QColor("#ff1744"), 2.5))
         painter.drawLine(origin, x_tip)
-        self._draw_arrow(painter, origin, x_tip, QColor("#ff1744"))
-        painter.drawText(x_tip + QPointF(8, -8), "X")
+        # self._draw_arrow(painter, origin, x_tip, QColor("#ff1744"))
+        # painter.drawText(x_tip + QPointF(8, -8), "X")
         
         # Y ekseni - Yeşil
         painter.setPen(QPen(QColor("#00e676"), 2.5))
         painter.drawLine(origin, y_tip)
-        self._draw_arrow(painter, origin, y_tip, QColor("#00e676"))
-        painter.drawText(y_tip + QPointF(-15, -8), "Y")
+        # self._draw_arrow(painter, origin, y_tip, QColor("#00e676"))
+        # painter.drawText(y_tip + QPointF(-15, -8), "Y")
         
         # Z ekseni - Cyan
         painter.setPen(QPen(QColor("#00e5ff"), 2.5))
         painter.drawLine(origin, z_tip)
-        self._draw_arrow(painter, origin, z_tip, QColor("#00e5ff"))
-        painter.drawText(z_tip + QPointF(8, 8), "Z")
+        # self._draw_arrow(painter, origin, z_tip, QColor("#00e5ff"))
+        # painter.drawText(z_tip + QPointF(8, 8), "Z")
         
         # Orijin
-        painter.setBrush(QBrush(QColor("#ffffff")))
-        painter.setPen(QPen(QColor("#666666"), 1.5))
-        painter.drawEllipse(origin, 4, 4)
-        painter.drawText(origin + QPointF(-15, 15), "O")
+        # painter.setBrush(QBrush(QColor("#ffffff")))
+        # painter.setPen(QPen(QColor("#666666"), 1.5))
+        # painter.drawEllipse(origin, 4, 4)
+        # painter.drawText(origin + QPointF(-15, 15), "O")
     
     def _project(self, p3d: Vec3):
         """3D noktayı zoom'suz projekte et"""
@@ -318,10 +318,10 @@ class PointItem(ClickableGraphicsItem):
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
 
         brush_color = self.get_active_color(self._is_hovered, self._is_selected)
-        border = self._colors["border"] if self._color_override is None else brush_color.darker(150)
+        # border = self._colors["border"] if self._color_override is None else brush_color.darker(150)
 
         painter.setBrush(QBrush(brush_color))
-        painter.setPen(QPen(border, 3 if (self._is_selected or self._is_hovered) else 2))
+        # painter.setPen(QPen(border, 3 if (self._is_selected or self._is_hovered) else 2))
         painter.drawEllipse(QRectF(-self.radius, -self.radius,
                                    self.radius * 2, self.radius * 2))
 

@@ -14,7 +14,7 @@ import sys
 from typing import Any, Dict
 from PySide6.QtWidgets import QApplication, QWidget, QVBoxLayout, QHBoxLayout, QPushButton
 import numpy as np
-from canvas3d import View3D
+from core.canvas3d import View3D
 
 points = {
     "P1": (0.0, 0.0, 0.0),
@@ -52,7 +52,7 @@ points = {
                     for name, coords in points.items()
                 }  
     
-from windengine import BuildingWindEngine
+from windcalc.windengine import BuildingWindEngine
 
 class WindViewer(QWidget):
 
@@ -113,7 +113,7 @@ class WindViewer(QWidget):
             print("Önce rüzgar yönü seçin.")
             return
 
-        from wind_report import get_report as _get_report
+        from windcalc.wind_report import get_report as _get_report
 
         # View'dan doğrudan PNG byte'ları al
         image_bytes = self.view.render_to_png_bytes(scale=2.0, transparent=False)

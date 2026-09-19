@@ -9,7 +9,7 @@ from typing import Iterable, Optional
 
 from utils.my_document import myDocument, Cm
 from utils.report_dataframe import ReportDataFrame
-from zone import CPI_NEGATIVE, CPI_POSITIVE
+from windcalc.zone import CPI_NEGATIVE, CPI_POSITIVE
 
 
 # ================================================================
@@ -382,7 +382,7 @@ def show_zones(building):
     return img_stream
 
 def all_wind_report(points, polygons, v_b0=28.0, terrain="Kategori III"):
-    from windengine import BuildingWindEngine
+    from windcalc.windengine import BuildingWindEngine
     doc = myDocument()
     doc.apply_visual_settings()
     doc.add_heading_numbered("RÜZGAR ANALİZİ", level=1)

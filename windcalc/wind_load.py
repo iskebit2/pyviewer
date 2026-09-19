@@ -8,8 +8,8 @@ from tkinter import filedialog, messagebox
 
 from PIL import Image, ImageTk
 
-from windengine import BuildingWindEngine
-from wind_report import all_wind_report, show_zones
+from windcalc.windengine import BuildingWindEngine
+from windcalc.wind_report import all_wind_report, show_zones
 from utils.datapanel import dataPanel
 from utils.logger import EnhancedLogger
 
