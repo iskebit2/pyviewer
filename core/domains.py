@@ -341,6 +341,7 @@ class EdgeItem(ClickableGraphicsItem):
         self.p2_pos = QPointF()
         self._is_selected = False
         self._is_hovered = False
+        self.display_name = None
         self.setAcceptHoverEvents(True)
         self.setZValue(150)
 
@@ -358,6 +359,12 @@ class EdgeItem(ClickableGraphicsItem):
         self.p2_pos = p2
         self.update()
         self.update_label_position()
+
+    def set_display_name(self, name: str):
+        """Edge'in görüntülenecek ismini ayarla (örn: POLY1.0)"""
+        self.display_name = name
+        if hasattr(self, "_label_item") and self._label_item:
+            self._label_item.setPlainText(name)
 
     def update_label_position(self):
         if self._label_item is None:

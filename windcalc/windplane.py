@@ -202,7 +202,7 @@ class WindPlane:
         self.edges = self._build_edges()
 
         self.global_leading = False
-
+        self.zones = []
         self.properties = {
             "name": self.polygon_name,
             "polygon": self.pts_3d,

@@ -79,9 +79,11 @@ class MainWindow(QMainWindow):
         self.building = None
         self.e = 6000.0
 
+        # ✅ YENİ: DataDialog referansı
+        self.data_dialog = None
+
         # UI
         self.setup_ui()
-        
 
         # Sinyaller
         self.view3d.element_selected.connect(self.handle_selection)
@@ -91,6 +93,7 @@ class MainWindow(QMainWindow):
 
         self.wind_vector_changed.connect(self.on_wind_vector_changed)
         self.wind_vector_changed.emit(self.wind_vector)
+        
 
     def setup_logging(self):
         handler = QTextEditHandler(self.log_box)
@@ -128,6 +131,7 @@ class MainWindow(QMainWindow):
             {"text": "🏗️ Building", "callback": self.building_wind_calc, "tooltip": "Bina yükü hesapla"},
             {"text": "📊 Analysis", "callback": self.analyze_selected, "tooltip": "Analiz yap", "enabled": False},
             {"text": "Item", "callback": self.item_selected, "tooltip": "Seçim nesnesini incele", "enabled": False},
+            {"text": "command test", "callback": self.command_test, "tooltip": "command test"},
         ]
 
         self.buttonbar = ButtonBar(self, buttons)
@@ -165,6 +169,15 @@ class MainWindow(QMainWindow):
 
         self.buttonbar.set_enabled("📐 get_from_points", point_count == 2)
 
+    def command_test(self):
+        selected_type = "POLYGON"
+        selected_id = "D2"
+        logging.info(f"{selected_type} Parameters... {selected_id}")
+
+        item = self.view3d.polygon_items[selected_id]
+        item.set_selected_state(True)
+        
+
     def item_selected(self):
         selected_type = self.view3d.selected_type
         selected_id = self.view3d.selected_id
@@ -191,43 +204,59 @@ class MainWindow(QMainWindow):
             logging.warning("Önce 'Building' butonuna tıklayarak bina verilerini oluşturun!")
             return
 
+        
+
         selected_type = self.view3d.selected_type
         selected_id = self.view3d.selected_id
 
         if not selected_type or not selected_id:
-            logging.warning("Lütfen bir poligon seçin!")
+            self._show_data_dialog(
+                                        self.building.surfaces_items,
+                                        title="All Surfaces",
+                                    )
             return
 
-        if selected_type != "POLYGON":
-            logging.warning("Lütfen bir poligon seçin!")
-            return
-        
-        try:
-            if selected_id not in self.view3d.polygons:
-                logging.warning(f"Poligon '{selected_id}' bulunamadı!")
-                return
-
-            coords = get_polygon_coords(
-                self.view3d.polygons[selected_id],
-                self.view3d.points,
-                1000
-            )
-
-            plane = WindPlane(coords, name=selected_id)
-            plane.analysis_(self.wind_vector, self.building)
-            self.show_data(plane.edges, "Edge Parameters")
-            info = dict_tree(plane.properties)
-            # show_data(plane.properties, "Surface Parameters", self)
-
-            logging.info("Surface Wind Analysis...\n"+info)
             
+        if selected_type == "POLYGON":            
+            plane = self.building.surfaces_items[selected_id]
+            self._show_edge_dialog(plane, title="Surface Parameters", polygon_name= selected_id)
 
-        except Exception as e:
-            logging.error(f"Analiz hatası: {e}")
-            logging.error(traceback.format_exc())
 
-   
+    def _show_data_dialog(self, data, title="Data", polygon_name=None):
+        if self.data_dialog is not None:
+            try:
+                self.data_dialog.close()
+            except RuntimeError:
+                pass
+            self.data_dialog = None
 
+        self.data_dialog = DataDialog(
+            self.view3d,
+            parent=self,
+            polygon_name=polygon_name,
+        )
+        self.data_dialog.set_data(data, title=title, polygon_name=polygon_name)
+        self.data_dialog.finished.connect(self._on_data_dialog_finished)
+        self.data_dialog.show()
+
+    def _show_edge_dialog(self, data, title="Data", polygon_name=None):
+        if self.data_dialog is not None:
+            try:
+                self.data_dialog.close()
+            except RuntimeError:
+                pass
+            self.data_dialog = None
+
+        self.data_dialog = DataDialog(self.view3d, parent=self, polygon_name=polygon_name)
+        self.data_dialog.set_data(data, title=title, polygon_name=polygon_name)
+        self.data_dialog.finished.connect(self._on_data_dialog_finished)
+        self.data_dialog.show()
+
+
+    def _on_data_dialog_finished(self, _):
+        self.data_dialog = None
+
+    
     # ==================== RÜZGAR PARAMETRELERİ ====================
 
     def set_wind_parameters(self):
@@ -452,9 +481,18 @@ class MainWindow(QMainWindow):
             w_dir=self.wind_vector,
             scale_factor=1000.0
         )
+        self.building.analysis_all_roof_wind(self.wind_vector)
+        
 
         info = dict_tree(self.building.get_summary())
         logging.info("Building Wind Calc...\n%s", info)
+
+        info= {key: type(value) for key, value in self.building.surfaces_items.items()}
+        logging.info("self.building.surfaces_items: %s", info)
+
+        
+
+
     # ==================== ÖRNEK VERİ ====================
 
     def create_sample_data(self):
@@ -506,8 +544,25 @@ class MainWindow(QMainWindow):
             except Exception as e:
                 logging.error(f"Action error: {e}")
 
-    def handle_selection(self, elem_type: str, elem_id: str, data: Any):
-        """Seçim işlemini handle eder"""
+    def handle_selection(self, elem_type, elem_id, data):
+        """View3D'den gelen seçimi işle."""
+        logging.debug(f"MainWindow: handle_selection - {elem_type}: {elem_id}")
+
+        if self.data_dialog is not None:
+            try:
+                if not self.data_dialog.isVisible():
+                    return
+
+                if elem_type is None:
+                    self.data_dialog.clear_selection()
+                else:
+                    # ✅ Ağacı seçilen elemana göre yeniden doldur
+                    self.data_dialog.show_element(elem_type, elem_id)
+            except RuntimeError:
+                self.data_dialog = None
+            except Exception as e:
+                logging.error(f"handle_selection sync hatası: {e}")
+
         if elem_type in ["POLYGON", "FRAME", "POINT", "EDGE"]:
             self.buttonbar.set_enabled("Item", True)
         else:
@@ -571,16 +626,7 @@ class MainWindow(QMainWindow):
             logging.warning(f"Cleanup error: {e}")
         event.accept()
 
-    def show_data(self, data, title= "Data"):
-        
-        self.data_dialog = DataDialog(
-                                data,
-                                title= title,
-                                parent=self
-                            )
-
-        self.data_dialog.setModal(False)
-        self.data_dialog.show()
+    
 
 
 if __name__ == "__main__":

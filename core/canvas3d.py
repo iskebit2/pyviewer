@@ -88,9 +88,10 @@ class View3D(QGraphicsView):
         self.polygon_items = {}
         self.edge_items = {}
         self.frame_items = {}
+        self.polygon_edge_items = {}
         
         self.graphics_line_items = []
-
+        self._highlighted_polygon_edges = {}  # Seçili poligonun kenarları
         self.show_labels = True   # tüm item label'ları görünür mü?
 
         self._visibility_states = {}
@@ -619,36 +620,57 @@ class View3D(QGraphicsView):
 
     def _draw_edges(self):
         """Edge'leri çizer"""
-        edges = self.extract_edges()
-        for (p1_n, p2_n), parent_polys in edges.items():
+        edges = self._get_visible_polygon_edges()
+        
+        for edge_key, edge_info in edges.items():
+            p1_n = edge_info["p1"]
+            p2_n = edge_info["p2"]
+            display_name = edge_info["display_name"]
+            parent_polys = edge_info["polygons"]
+            edge_index = edge_info.get("edge_index")
+            
             if p1_n in self.points and p2_n in self.points:
                 pos1, _ = self.screen_position(Vec3(*self.points[p1_n]))
                 pos2, _ = self.screen_position(Vec3(*self.points[p2_n]))
-                edge_key = f"{p1_n}-{p2_n}"
-
-                # parent_polys bilgisini doğru şekilde aktar
-                edge_item = EdgeItem(edge_key, p1_n, p2_n, parent_polys)
+                
+                # Edge key (unique)
+                if isinstance(edge_key, tuple):
+                    edge_id = f"{edge_key[0]}-{edge_key[1]}"
+                else:
+                    edge_id = str(edge_key)
+                
+                # Eğer polygon context varsa edge_id'ye ekle
+                if edge_index is not None:
+                    edge_id = f"{parent_polys[0]}.{edge_index}"
+                
+                edge_item = EdgeItem(edge_id, p1_n, p2_n, parent_polys)
                 edge_item.set_line(pos1, pos2)
-                edge_item.clicked.connect(lambda e=edge_key, pp=parent_polys: self.on_edge_clicked(e, pp))
+                edge_item.clicked.connect(
+                    lambda e=edge_id, pp=parent_polys: self.on_edge_clicked(e, pp)
+                )
                 edge_item.context_menu_requested.connect(
-                    lambda n=edge_key: self.show_context_menu("EDGE", n)
+                    lambda n=edge_id: self.show_context_menu("EDGE", n)
                 )
                 edge_item.visibility_changed.connect(
                     lambda n, v: self._on_visibility_changed("EDGE", n, v)
                 )
-
-                if self._is_item_selected("EDGE", edge_key):
+                
+                # ✅ EdgeItem'a görüntülenecek isim (örn: POLY1.0) ata
+                if hasattr(edge_item, "set_display_name"):
+                    edge_item.set_display_name(display_name)
+                
+                if self._is_item_selected("EDGE", edge_id):
                     edge_item.set_selected_state(True)
-
+                
                 # Görünürlüğü uygula
-                visible = self._get_visibility("EDGE", edge_key)
+                visible = self._get_visibility("EDGE", edge_id)
                 edge_item.setVisible(visible)
                 edge_item._is_visible = visible
-
+                
                 if hasattr(edge_item, "set_label_visible"):
                     edge_item.set_label_visible(self.show_labels)
-
-                self.edge_items[edge_key] = edge_item
+                
+                self.edge_items[edge_id] = edge_item
                 self.scene.addItem(edge_item)
 
     def _is_item_selected(self, item_type, item_id):
@@ -762,6 +784,19 @@ class View3D(QGraphicsView):
         logging.info(f"View3D: Emitting multi_selection_changed with {len(all_selected)} items")
         self.multi_selection_changed.emit(all_selected)
 
+    def cancel_modes(self):
+        logging.debug("View3D: Cancelling active modes")
+
+        self.edge_selection_mode = False
+        self.point_selection_mode = False
+        self.polygon_selection_mode = False
+        self.multi_selection_mode = False
+
+        self.creation_sequence.clear()
+        self.polygon_edge_items.clear()
+        self.update_preview_path()
+        self.draw_scene()
+        
     def clear_selection(self):
         logging.debug("View3D: Clearing selection")
 
@@ -823,6 +858,100 @@ class View3D(QGraphicsView):
             else:
                 self.select_element("POLYGON", name)
                 self.element_selected.emit("POLYGON", name, None)
+                
+                # ✅ YENİ: Poligon seçilince kenarlarını numaralı şekilde göster
+                self._show_polygon_edges(name)
+
+    def _show_polygon_edges(self, polygon_id):
+        """
+        Seçilen poligonun kenarlarını 0,1,2,... şeklinde numaralandırarak
+        edge selection mode'da gösterir.
+        """
+        if polygon_id not in self.polygons:
+            logging.warning(f"_show_polygon_edges: {polygon_id} bulunamadı")
+            return
+
+        # Edge modunu aç
+        self.edge_selection_mode = True
+
+        # Sadece bu poligonun kenarlarını işaretle
+        self._highlighted_polygon_edges = self._get_polygon_edges_with_indices(polygon_id)
+
+        logging.info(
+            f"View3D: Polygon {polygon_id} kenarları gösteriliyor: "
+            f"{list(self._highlighted_polygon_edges.keys())}"
+        )
+
+        # Sahneyi yeniden çiz (edge'ler çizilecek)
+        self.draw_scene()
+
+
+    def _get_polygon_edges_with_indices(self, polygon_id):
+        """
+        Bir poligonun kenarlarını sırayla (0,1,2,...) döndürür.
+        Dönüş: { "0": (p1_name, p2_name), "1": (p2_name, p3_name), ... }
+        """
+        edges = {}
+        if polygon_id not in self.polygons:
+            return edges
+
+        pts = self.polygons[polygon_id]
+        n = len(pts)
+        for i in range(n):
+            p1 = pts[i]
+            p2 = pts[(i + 1) % n]
+            edges[str(i)] = (p1, p2)
+
+        return edges
+
+
+    def _get_visible_polygon_edges(self):
+        """
+        Görüntülenecek kenarları döndürür.
+        Eğer bir poligon seçilmişse, sadece o poligonun kenarlarını
+        (numara ile birlikte) döndürür. Aksi halde tüm kenarları döndürür.
+        """
+        # Seçili polygon var mı?
+        active_poly = None
+        if self.selected_type == "POLYGON" and self.selected_id:
+            active_poly = self.selected_id
+        elif self.multi_selection_mode and "POLYGON" in self.selected_items:
+            # Çoklu seçimde tek poligon seçiliyse onu kullan
+            polys = self.selected_items["POLYGON"]
+            if len(polys) == 1:
+                active_poly = polys[0]
+
+        if active_poly and active_poly in self.polygons:
+            # Sadece bu poligonun kenarlarını numaralı olarak döndür
+            result = {}
+            for idx_str, (p1, p2) in self._get_polygon_edges_with_indices(active_poly).items():
+                # Edge key: sıralı tuple (çakışmayı önlemek için)
+                edge_key = tuple(sorted([p1, p2]))
+                if edge_key not in result:
+                    result[edge_key] = {
+                        "p1": p1,
+                        "p2": p2,
+                        "display_name": f"{active_poly}.{idx_str}",  # Örn: POLY1.0
+                        "polygons": [active_poly],
+                        "edge_index": idx_str,
+                    }
+            self.polygon_edge_items = result
+            return result
+
+        # # Tüm kenarları göster (eski davranış)
+        # all_edges = self.extract_edges()
+        # result = {}
+        # for (p1, p2), parent_polys in all_edges.items():
+        #     edge_key = (p1, p2)
+        #     result[edge_key] = {
+        #         "p1": p1,
+        #         "p2": p2,
+        #         "display_name": f"{p1}-{p2}",
+        #         "polygons": parent_polys,
+        #         "edge_index": None,
+        #     }
+        return self.polygon_edge_items
+
     def on_zone_clicked(self, name):
         logging.debug(f"View3D: Zone clicked - {name}")
 
@@ -1195,6 +1324,13 @@ class View3D(QGraphicsView):
         logging.debug(f"View3D: Wheel event - Zoom: {old_zoom:.4f} -> {self.camera.zoom:.4f}")
         self.draw_scene()
 
+    def has_selection(self):
+        return (
+            self.selected_type is not None
+            or self.selected_id is not None
+            or any(self.selected_items.values())
+        )
+
     def keyPressEvent(self, event):
         logging.debug(f"View3D: keyPressEvent - Key: {event.key()}")
         self._log_modifiers(event.modifiers())
@@ -1207,7 +1343,10 @@ class View3D(QGraphicsView):
         elif key == Qt.Key.Key_Home:
             self.zoom_extents()
         elif key == Qt.Key.Key_Escape:
-            self.clear_selection()
+            if self.has_selection():
+                self.clear_selection()
+            else:
+                self.cancel_modes()
         elif key == Qt.Key.Key_A and (modifiers & Qt.KeyboardModifier.ControlModifier):
             self.select_all()
         elif key == Qt.Key.Key_D and (modifiers & Qt.KeyboardModifier.ControlModifier):

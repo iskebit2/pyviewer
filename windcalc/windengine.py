@@ -389,6 +389,9 @@ class BuildingWindEngine:
                 render_lines[name] = {}
 
         self.all_wind_zones = self.get_definition_regions(self.surfaces_items, render_lines)
+        for id_, data in self.all_wind_zones.items():
+            self.surfaces_items[id_].zones= data
+
         return self.all_wind_zones
 
     def _global_analysis_all_roof_wind(self, all_surfaces, w, tol=1e-3):
