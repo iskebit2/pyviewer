@@ -65,7 +65,7 @@ class WindViewer(QWidget):
         self.w_list = W_LIST
         self.building = None
 
-        self.view = View3D()
+        self.view3d = View3D()
         
 
         buttons = QHBoxLayout()
@@ -80,10 +80,10 @@ class WindViewer(QWidget):
 
         layout = QVBoxLayout(self)
         layout.addLayout(buttons)
-        layout.addWidget(self.view)
+        layout.addWidget(self.view3d)
 
-        self.view.set_data(points=self.points, polygons=self.polygons)
-        self.view.data_changed.connect(lambda t, i, v: print(f"{t}:{i} -> {v}"))
+        self.view3d.set_data(points=self.points, polygons=self.polygons)
+        self.view3d.data_changed.connect(lambda t, i, v: print(f"{t}:{i} -> {v}"))
 
     # ------------------------------------------------------------
     # Yardımcılar
@@ -116,14 +116,14 @@ class WindViewer(QWidget):
         from windcalc.wind_report import get_report as _get_report
 
         # View'dan doğrudan PNG byte'ları al
-        image_bytes = self.view.render_to_png_bytes(scale=2.0, transparent=False)
+        image_bytes = self.view3d.render_to_png_bytes(scale=2.0, transparent=False)
 
         _get_report(self.building, image_bytes=image_bytes)
         
     def set_wind(self, w: str):
         print(f"\n{'=' * 40}\nWIND: {w}\n{'=' * 40}")
 
-        view_data = self.view.get_all_data()
+        view_data = self.view3d.get_all_data()
         points = view_data["points"]
         polygons = view_data["polygons"]
 
@@ -154,11 +154,11 @@ class WindViewer(QWidget):
             self.building.generate_render_lines(geom) if geom is not None else []
         )
 
-        self.view.zones = all_wind_zones
-        self.view.lines = w_render_lines
-        self.view._visibility_states.clear()
-        self.view.rebuild()
-        self.view.update()
+        self.view3d.zones = all_wind_zones
+        self.view3d.lines = w_render_lines
+        self.view3d._visibility_states.clear()
+        self.view3d.rebuild()
+        self.view3d.update()
 
 if __name__ == "__main__":
     

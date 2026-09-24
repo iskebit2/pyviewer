@@ -1,3 +1,4 @@
+from argparse import Action
 import json
 import logging
 
@@ -77,7 +78,7 @@ class MenuBar(QMenuBar):
         
         analyze_action = wind_menu.addAction("&Analyze Selected")
         analyze_action.setShortcut("Ctrl+A")
-        analyze_action.triggered.connect(self.main_window.analyze_selected)
+        analyze_action.triggered.connect(self.main_window.building_wind_calc)
         
         wind_menu.addSeparator()
         
@@ -463,3 +464,16 @@ class MenuBar(QMenuBar):
             logging.error(f"Error exporting PNG: {e}")
             logging.info("Hata", f"PNG kaydedilemedi: {str(e)}")
 
+    def _build_view_menu(self):
+        view_menu = self.menuBar().addMenu("&View")
+
+        toggle_data_panel = Action("Data Panel", self)
+        toggle_data_panel.setShortcut("Ctrl+D")
+        toggle_data_panel.setCheckable(True)
+        toggle_data_panel.setChecked(self.data_dock.isVisible())
+        toggle_data_panel.triggered.connect(self.data_dock.setVisible)
+
+        # Dock görünürlüğü değişince menü check güncellensin
+        self.data_dock.visibilityChanged.connect(toggle_data_panel.setChecked)
+
+        view_menu.addAction(toggle_data_panel)

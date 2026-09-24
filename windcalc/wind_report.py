@@ -28,11 +28,9 @@ def _second(v):
 
 def _iter_zones(building) -> Iterable:
     """Tüm yüzeylerdeki Zone nesnelerini tek düz listede gezer."""
-    all_wind_zones = getattr(building, "all_wind_zones", None)
-    if not all_wind_zones:
-        return
+    all_wind_zones = getattr(building, "all_wind_zones", None) or {}
     for zones in all_wind_zones.values():
-        for zone in zones:
+        for zone in (zones or []):
             yield zone
 
 
