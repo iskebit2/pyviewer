@@ -105,7 +105,7 @@ class MainWindow(QMainWindow):
 
         self.setWindowTitle("3D Viewer")
         self.setGeometry(100, 100, 1200, 800)
-
+        self.maindata = {}
         # ---- Veri ----
         self.wind_vector = np.array([1.0, 0.0, 0.0])
         self.v_b0 = 28.0
@@ -173,8 +173,8 @@ class MainWindow(QMainWindow):
              "tooltip": "Analiz yap", "enabled": False},
             {"text": "Item",            "callback": self.item_selected,
              "tooltip": "Seçim nesnesini incele", "enabled": False},
-            {"text": "command test",    "callback": self.command_test,
-             "tooltip": "command test"},
+            {"text": "Yük Analizi",    "callback": self.yuk_analiz,
+             "tooltip": "Yük Analizi"},
         ]
 
         self.buttonbar = ButtonBar(self, buttons)
@@ -596,45 +596,14 @@ class MainWindow(QMainWindow):
         return p1, p2, perp
 
     # =========================================================
-    # COMMAND TEST
+    # Yük Analizi
     # =========================================================
 
-    def command_test(self):
+    def yuk_analiz(self):
         """Komut satırı testi — hızlı building + render."""
-        w_dir = np.asarray(self.wind_vector, dtype=float)
-        print(f"\n{'=' * 40}\nWIND: {w_dir}\n{'=' * 40}")
-
-        view_data = self.view3d.get_all_data()
-
-        try:
-            self.bundle = wind_analyze(
-                points=view_data["points"],
-                polygons=view_data["polygons"],
-                v_b0=28.0,
-                terrain="Kategori III",
-                w_list={"w": w_dir},
-                verbose=True,
-            )
-        except Exception as e:
-            print(f"[command_test] Analiz hatası: {e}")
-            print(traceback.format_exc())
-            return
-
-        self.building = self.bundle
-        self.element_service.set_building(self.bundle)
-
-        self._print_summary(self.bundle.get_summary())
-
-        # Rüzgar oku geometrisi (OBB/render)
-        render_lines = self._compute_render_geometry(
-            view_data["points"], w_dir
-        )
-        if render_lines:
-            self.view3d.lines = render_lines
-
-        self._sync_bundle_to_view3d()
-        if hasattr(self.view3d, "draw_scene"):
-            self.view3d.draw_scene()
+        from loads.load_manager import MainWindow
+        self.loadmanager = MainWindow(self.maindata)
+        self.loadmanager.show()
 
     def _compute_render_geometry(self, points, w_dir):
         """

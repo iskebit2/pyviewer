@@ -125,3 +125,16 @@ class WindEngine:
         self.ce = (self.cr * self.ct) ** 2 * (1.0 + 7.0 * self.Iv)
         self.q_p = self.ce * self.q_b
 
+    def report(self):
+        report_= {
+            "Geometri": dict(self.geometry),
+            "Rüzgar": {
+            "v_b0": self.v_b0,
+            "terrain": self.terrain,
+            "q_p": self.q_p,
+            "z_ref": self.z_ref,
+            "z0": self.z0,
+            "zmin": self.zmin,
+            }
+        }
+        return f'Deprem hesabı\n\n{report_}'

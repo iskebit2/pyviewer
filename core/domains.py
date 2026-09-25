@@ -291,7 +291,7 @@ class PointItem(ClickableGraphicsItem):
             normal="#2196f3", hover="#00bcd4",
             selected="#e91e63", hidden="#9e9e9e", border="#0d47a1"
         )
-
+        
         self._ensure_label()
         self._label_item.setPos(radius + 3, -radius - 3)
         self.update_label_position()
@@ -710,10 +710,10 @@ class ZoneItem(ClickableGraphicsItem):
         self._fill_selected = QColor(233, 30, 99, 110)    # pink
 
         self.set_default_colors(
-            normal="#00897b", hover="#00bcd4",
+            normal="#090089", hover="#00bcd4",
             selected="#e91e63", hidden="#9e9e9e", border="#004d40"
         )
-
+        
         self._ensure_label()
         self._label_item.setDefaultTextColor(QColor("#004d40"))
 

@@ -251,7 +251,7 @@ class MenuBar(QMenuBar):
         try:
             with open(file_path, 'r', encoding='utf-8') as f:
                 data = json.load(f)
-
+            self.main_window.maindata = data
             self.main_window.view3d.set_data(
                 data.get('points', {}),
                 data.get('polygons', {}),
