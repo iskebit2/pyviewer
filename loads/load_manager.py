@@ -1,403 +1,334 @@
-import ast
-import json
-import sys
+#load_manager.py
 
-from PySide6.QtCore import Signal
-from PySide6.QtWidgets import (
-    QApplication,
-    QCheckBox,
-    QFileDialog,
-    QGroupBox,
-    QHBoxLayout,
-    QLabel,
-    QLineEdit,
-    QMainWindow,
-    QMessageBox,
-    QPushButton,
-    QTabWidget,
-    QTextEdit,
-    QVBoxLayout,
-    QWidget,
-)
+from typing import Iterable
 
-from loads.snow_load import SnowLoad
-from windcalc.windengine import WindEngine
-from loads.spectrum import EarthquakeLoad
-from loads.spectrum_plot import SpectrumPlot
+from loads.load_definition import LoadDefinition
 
 
+class LoadManager:
+    """
+    Projedeki G/Q yük tanımlarını ve eleman atamalarını yönetir.
 
-# ----------------------------------------------------------------------
-# Analiz tanımları
-# ----------------------------------------------------------------------
+    assignments:
+        {
+            element_id: {
+                "G": ["G01", "G02"],
+                "Q": ["Q01"]
+            }
+        }
+    """
 
-ANALYSES = [
-    (
-        "wind",
-        "Rüzgar",
-        lambda config, data: WindEngine(
-            points=config["points"],
-            polygons=config["polygons"],
-            **data
+    def __init__(
+        self,
+        material_weights: dict[str, float] | None = None
+    ):
+        self.material_weights = material_weights or {}
+
+        self.definitions: dict[str, LoadDefinition] = {}
+
+        self.assignments: dict[int | str, dict[str, list[str]]] = {}
+
+    # ---------------------------------------------------------
+    # YÜK TANIMLARI
+    # ---------------------------------------------------------
+
+    def add_definition(self, definition: LoadDefinition):
+
+        if definition.load_type not in ("G", "Q"):
+            raise ValueError(
+                "load_type yalnızca 'G' veya 'Q' olabilir."
+            )
+
+        if definition.id in self.definitions:
+            raise ValueError(
+                f"Aynı ID zaten mevcut: {definition.id}"
+            )
+
+        self.definitions[definition.id] = definition
+
+    def get_definition(self, load_id: str) -> LoadDefinition:
+
+        try:
+            return self.definitions[load_id]
+        except KeyError:
+            raise KeyError(
+                f"Tanımlı yük bulunamadı: {load_id}"
+            )
+
+    def get_value(self, load_id: str) -> float:
+
+        definition = self.get_definition(load_id)
+
+        return definition.calculate(
+            self.material_weights
         )
-    ),
 
-    (
-        "snow",
-        "Kar",
-        lambda config, data: SnowLoad(data)
-    ),
+    # ---------------------------------------------------------
+    # ELEMAN ATAMALARI
+    # ---------------------------------------------------------
 
-    (
-        "earthquake",
-        "Deprem",
-        lambda config, data: EarthquakeLoad(**data)
-    ),
-]
+    def assign(
+        self,
+        element_id: int | str,
+        load_id: str
+    ):
 
+        definition = self.get_definition(load_id)
 
+        load_type = definition.load_type
 
-# ----------------------------------------------------------------------
-# DataPanel
-# ----------------------------------------------------------------------
+        if element_id not in self.assignments:
+            self.assignments[element_id] = {
+                "G": [],
+                "Q": []
+            }
 
-class DataPanel(QGroupBox):
+        if load_id not in self.assignments[element_id][load_type]:
+            self.assignments[element_id][load_type].append(load_id)
 
-    calculate_requested = Signal()
+    def remove(
+        self,
+        element_id: int | str,
+        load_id: str
+    ):
 
-    def __init__(self, title="", parent=None):
-        super().__init__(title, parent)
+        if element_id not in self.assignments:
+            return
 
-        self.data = {}
-        self.original_data = {}
-        self.inputs = {}
+        definition = self.get_definition(load_id)
 
-        self.main_layout = QVBoxLayout(self)
+        load_type = definition.load_type
 
-        self.form = QWidget()
-        self.form_layout = QVBoxLayout(self.form)
+        if load_id in self.assignments[element_id][load_type]:
+            self.assignments[element_id][load_type].remove(load_id)
 
-        self.main_layout.addWidget(self.form)
+    def clear_element(
+        self,
+        element_id: int | str,
+        load_type: str | None = None
+    ):
 
-        buttons = QHBoxLayout()
+        if element_id not in self.assignments:
+            return
 
-        self.reset_button = QPushButton("Geri Al")
-        self.cancel_button = QPushButton("İptal")
-        self.save_button = QPushButton("✓ Kaydet")
-        self.calculate_button = QPushButton("Hesapla")
+        if load_type is None:
+            self.assignments[element_id] = {
+                "G": [],
+                "Q": []
+            }
 
-        buttons.addWidget(self.reset_button)
-        buttons.addWidget(self.cancel_button)
-        buttons.addWidget(self.save_button)
-        buttons.addWidget(self.calculate_button)
+        else:
+            self.assignments[element_id][load_type] = []
 
-        self.main_layout.addLayout(buttons)
+    # ---------------------------------------------------------
+    # ELEMAN YÜKLERİ
+    # ---------------------------------------------------------
 
-        self.reset_button.clicked.connect(self.reset)
-        self.cancel_button.clicked.connect(self.reset)
-        self.save_button.clicked.connect(self.save)
-        self.calculate_button.clicked.connect(self.calculate)
+    def get_element_loads(
+        self,
+        element_id: int | str
+    ) -> dict[str, list[LoadDefinition]]:
 
-    # ------------------------------------------------------------------
-
-    def set_data(self, data):
-        self.data = dict(data)
-        self.original_data = dict(data)
-
-        self._clear()
-        self._build()
-
-    # ------------------------------------------------------------------
-
-    def _clear(self):
-
-        self.inputs.clear()
-
-        while self.form_layout.count():
-
-            item = self.form_layout.takeAt(0)
-
-            if item.widget():
-                item.widget().deleteLater()
-
-    # ------------------------------------------------------------------
-
-    def _build(self):
-
-        for key, value in self.data.items():
-
-            row = QHBoxLayout()
-
-            label = QLabel(key)
-
-            if isinstance(value, bool):
-
-                widget = QCheckBox()
-                widget.setChecked(value)
-
-            else:
-
-                widget = QLineEdit(str(value))
-
-            self.inputs[key] = widget
-
-            row.addWidget(label)
-            row.addWidget(widget)
-
-            self.form_layout.addLayout(row)
-
-    # ------------------------------------------------------------------
-
-    def _convert(self, key, widget):
-
-        old_value = self.data[key]
-
-        if isinstance(old_value, bool):
-            return widget.isChecked()
-
-        text = widget.text().strip()
-
-        if isinstance(old_value, dict):
-            return ast.literal_eval(text)
-
-        if isinstance(old_value, list):
-            return ast.literal_eval(text)
-
-        if isinstance(old_value, int):
-            return int(text)
-
-        if isinstance(old_value, float):
-            return float(text)
-
-        return text
-
-    # ------------------------------------------------------------------
-
-    def get(self):
-
-        return {
-            key: self._convert(key, widget)
-            for key, widget in self.inputs.items()
+        result = {
+            "G": [],
+            "Q": []
         }
 
-    # ------------------------------------------------------------------
-
-    def save(self):
-
-        try:
-            self.data = self.get()
-
-        except (ValueError, TypeError) as e:
-
-            QMessageBox.warning(
-                self,
-                "Geçersiz değer",
-                str(e)
-            )
-
-            return False
-
-        return True
-
-    # ------------------------------------------------------------------
-
-    def reset(self):
-
-        self.data = dict(self.original_data)
-
-        self._clear()
-        self._build()
-
-    # ------------------------------------------------------------------
-
-    def calculate(self):
-
-        if self.save():
-            self.calculate_requested.emit()
-
-
-# ----------------------------------------------------------------------
-# MainWindow
-# ----------------------------------------------------------------------
-
-class MainWindow(QMainWindow):
-
-    def __init__(self, config=None, parent=None):
-        super().__init__()
-
-        self.setWindowTitle("Yapı Analizleri")
-        self.resize(800, 600)
-
-        self.config = config
-        self.parent_ = parent
-        self.panels = {}
-        self.analysis_factories = {}
-
-        self.spectrum_button = QPushButton("Grafik")
-        self.spectrum_button.hide()
-
-        self.open_button = QPushButton("Dosya Aç")
-        self._build_ui()
-        if config is not None:
-            self.open_button.hide()
-            self.load_config(config)
-
-
-
-        self.spectrum_button.clicked.connect(self.show_spectrum)
-        
-
-    # ------------------------------------------------------------------
-
-    def _build_ui(self):
-
-        central = QWidget()
-        self.setCentralWidget(central)
-
-        main_layout = QVBoxLayout(central)
-
-        # Dosya aç
-        top = QHBoxLayout()
-
-        
-
-        top.addWidget(self.open_button)
-        top.addWidget(self.spectrum_button)
-        top.addStretch()
-
-        main_layout.addLayout(top)
-
-        self.open_button.clicked.connect(self.open_file)
-
-        # Sekmeler
-        self.tabs = QTabWidget()
-
-        main_layout.addWidget(self.tabs)
-
-        # Analizler
-        for key, title, factory in ANALYSES:
-
-            panel = DataPanel(title)
-
-            panel.calculate_requested.connect(
-                lambda key=key: self.calculate(key)
-            )
-
-            self.panels[key] = panel
-            self.analysis_factories[key] = factory
-
-            self.tabs.addTab(panel, title)
-
-        # Sonuç
-        self.result = QTextEdit()
-        self.result.setReadOnly(True)
-
-        main_layout.addWidget(self.result)
-
-    # ------------------------------------------------------------------
-
-    def open_file(self):
-
-        filename, _ = QFileDialog.getOpenFileName(
-            self,
-            "JSON dosyası aç",
-            "",
-            "JSON Files (*.json)"
+        assignment = self.assignments.get(
+            element_id,
+            {"G": [], "Q": []}
         )
 
-        if not filename:
-            return
+        for load_type in ("G", "Q"):
 
-        try:
+            for load_id in assignment[load_type]:
 
-            with open(filename, "r", encoding="utf-8") as f:
-                config = json.load(f)
+                result[load_type].append(
+                    self.get_definition(load_id)
+                )
 
-        except Exception as e:
+        return result
 
-            QMessageBox.critical(
-                self,
-                "Dosya Hatası",
-                str(e)
+    def get_element_total(
+        self,
+        element_id: int | str,
+        load_type: str
+    ) -> float:
+
+        if load_type not in ("G", "Q"):
+            raise ValueError(
+                "load_type G veya Q olmalıdır."
             )
 
-            return
-
-        self.load_config(config)
-
-    # ------------------------------------------------------------------
-
-    def load_config(self, config):
-
-        self.config = config
-
-        for key, panel in self.panels.items():
-
-            data = config.get(
-                f"{key}_config",
-                {}
-            )
-
-            panel.set_data(data)
-
-        self.result.clear()
-
-    # ------------------------------------------------------------------
-
-    def calculate(self, key):
-        if key == "earthquake":
-            self.spectrum_button.hide()
-        try:
-
-            data = self.panels[key].get()
-
-            factory = self.analysis_factories[key]
-
-            analysis = factory(
-                self.config,
-                data
-            )
-
-            self.result.setPlainText(
-                str(analysis.report())
-            )
-
-            if key == "earthquake":
-                self.earthquake_analysis = analysis
-                self.spectrum_button.show()
-
-
-        except Exception as e:
-
-            QMessageBox.critical(
-                self,
-                "Hesap Hatası",
-                str(e)
-            )
-
-    def show_spectrum(self):
-
-        if not hasattr(self, "earthquake_analysis"):
-            return
-
-        self.spectrum_plot = SpectrumPlot()
-
-        self.spectrum_plot.set_spectrum(
-            self.earthquake_analysis
+        assignment = self.assignments.get(
+            element_id,
+            {"G": [], "Q": []}
         )
 
-        self.spectrum_plot.show()
+        return sum(
+            self.get_value(load_id)
+            for load_id in assignment[load_type]
+        )
 
+    # ---------------------------------------------------------
+    # PROJEDE KULLANILANLAR
+    # ---------------------------------------------------------
 
-# ----------------------------------------------------------------------
-# Main
-# ----------------------------------------------------------------------
+    def used_definitions(
+        self,
+        load_type: str | None = None
+    ) -> list[LoadDefinition]:
+
+        used_ids = set()
+
+        for assignment in self.assignments.values():
+
+            for kind in ("G", "Q"):
+
+                if load_type is not None and kind != load_type:
+                    continue
+
+                used_ids.update(
+                    assignment[kind]
+                )
+
+        result = []
+
+        for load_id in used_ids:
+
+            definition = self.get_definition(load_id)
+
+            result.append(definition)
+
+        return sorted(
+            result,
+            key=lambda x: x.id
+        )
+
+    # ---------------------------------------------------------
+    # RAPOR VERİSİ
+    # ---------------------------------------------------------
+
+    def definition_rows(
+        self,
+        load_type: str | None = None
+    ) -> list[dict]:
+
+        rows = []
+
+        for definition in self.used_definitions(load_type):
+
+            rows.append({
+                "ID": definition.id,
+                "Yük": definition.name,
+                "Tip": definition.load_type,
+                "Değer (kN/m²)": round(
+                    definition.calculate(
+                        self.material_weights
+                    ),
+                    3
+                ),
+                "Kaynak": definition.source,
+            })
+
+        return rows
+
+    def assignment_rows(self) -> list[dict]:
+
+        rows = []
+
+        for element_id, assignment in self.assignments.items():
+
+            g = [
+                self.get_definition(load_id).name
+                for load_id in assignment["G"]
+            ]
+
+            q = [
+                self.get_definition(load_id).name
+                for load_id in assignment["Q"]
+            ]
+
+            rows.append({
+                "Eleman": element_id,
+                "G yükleri": ", ".join(g),
+                "G toplam (kN/m²)": round(
+                    self.get_element_total(element_id, "G"),
+                    3
+                ),
+                "Q yükleri": ", ".join(q),
+                "Q toplam (kN/m²)": round(
+                    self.get_element_total(element_id, "Q"),
+                    3
+                ),
+            })
+
+        return rows
 
 if __name__ == "__main__":
+    from data.material_data import MATERIAL_WEIGHTS, LIVE_LOADS
 
-    app = QApplication(sys.argv)
+    from loads.load_definition import (
+        LoadDefinition,
+        LoadComponent
+    )
 
-    window = MainWindow()
-    window.show()
+    from loads.load_manager import LoadManager
 
-    sys.exit(app.exec())
+
+    manager = LoadManager(
+        material_weights=MATERIAL_WEIGHTS
+    )
+
+    manager.add_definition(
+    LoadDefinition(
+        id="G01",
+        name="Konut Döşemesi",
+        load_type="G",
+        components=[
+            LoadComponent(
+                name="Seramik",
+                material="seramik",
+                thickness=0.01
+            ),
+            LoadComponent(
+                name="Şap",
+                material="şap",
+                thickness=0.05
+            ),
+            LoadComponent(
+                name="Asma tavan",
+                value=0.30
+            )
+        ],
+        source="user"
+    )
+)
+    manager.add_definition(
+    LoadDefinition(
+        id="G02",
+        name="Karo Kaplama",
+        load_type="G",
+        value=2.079,
+        source="TS 498"
+    )
+)
+
+    hareketli = LoadDefinition(
+    id="Q01",
+    name=LIVE_LOADS["konut"]["name"],
+    load_type="Q",
+    value=LIVE_LOADS["konut"]["value"],
+    source="TS 498"
+)
+    
+    manager.add_definition(hareketli)
+    manager.assign(101, "G01")
+    manager.assign(101, "Q01")
+
+    manager.assign(102, "G01")
+    manager.assign(102, "Q01")
+
+    manager.assign(103, "G02")
+    manager.assign(103, "Q01")
+    print(manager.definition_rows("Q"))

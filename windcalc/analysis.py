@@ -128,56 +128,49 @@ W_LIST = {
 
 
 def analyze(
-    points: Dict[str, Tuple[float, float, float]],
-    polygons: Dict[str, List[str]],
-    v_b0: float = 28.0,
-    terrain: str = "Kategori III",
-    w_list: Dict[str, np.ndarray] | None = None,
+    points,
+    polygons,
     verbose: bool = False,
+    **engine_kwargs,
 ) -> ZoneBundle:
-    """
-    Tüm rüzgar yönleri için zone analizini yapar.
-    Çizim ile ilgili HİÇBİR şey yapmaz.
-    """
-    if w_list is None:
-        w_list = W_LIST
+
+    w_list = W_LIST
 
     results: List[ZoneResult] = []
     last_e = 0.0
 
     for w_key, w_dir in w_list.items():
+
         w_dir = np.asarray(w_dir, dtype=float)
 
         if verbose:
             print(f"\n{'=' * 40}\nWIND: {w_key}\n{'=' * 40}")
 
         engine = WindEngine(
-            points=points,
-            polygons=polygons,
-            v_b0=v_b0,
-            terrain=terrain,
-            w_dir=w_dir,
-        )
+                        points=points,
+                        polygons=polygons,
+                        w_dir=w_dir,
+                        **engine_kwargs,
+                    )
+
         last_e = engine.e
 
-        # --- Surface'ları kur ---
         all_surfaces: Dict[str, Surface] = {}
+
         for poly_name, pt_names in polygons.items():
             pts = np.array([points[pt] for pt in pt_names])
+
             surf = Surface(pts, name=poly_name)
             surf.analyze(w_dir)
+
             all_surfaces[poly_name] = surf
 
             if verbose:
                 _debug_surface(surf)
 
-        # --- Yüzeyler arası analiz ---
         _analyze_shared_edges(all_surfaces, w_dir, tol=1e-3)
         _analysis_global_edges(all_surfaces)
         _analysis_classify_all_surface(all_surfaces)
-
-        # --- Zone üretimi (SURFACE'e bağlı ama çizimden bağımsız) ---
-        # NOT: zone_generator burada çağrılıyor; sadece 3D coords üretiyor.
         _generate_zones(all_surfaces, engine.e)
 
         results.append(

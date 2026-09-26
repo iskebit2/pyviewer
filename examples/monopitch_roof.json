@@ -1,15 +1,18 @@
-{"points": {"P1": [0.0, 0.0, 0.0], "P2": [12.0, 0.0, 0.0], "P3": [12.0, 8.0, 0.0], "P4": [0.0, 8.0, 0.0], "P5": [0.0, 0.0, 4.0], "P6": [12.0, 0.0, 4.0], "P7": [12.0, 8.0, 5.0], "P8": [0.0, 8.0, 5.0]},
-"polygons": {"D1": ["P1", "P2", "P6", "P5"], "D2": ["P1", "P5", "P8", "P4"], "D3": ["P2", "P3", "P7", "P6"], "D4": ["P3", "P4", "P8", "P7"], "C1": ["P5", "P6", "P7", "P8"]},
+{
 "project": {
-    "name": "Ahşap Konut Projesi",
-    "type": "Konut",
-    "address": "Sarıyer/İstanbul",
-    "coordinates": "36.0,42.0",
-    "altitude": 50,
-    "structure_type": "Ahşap",
-    "wood_material": "C24",
-    "building_height": 11
-  },
+"name": "Ahşap Konut Projesi",
+"type": "Konut",
+"address": "Sarıyer/İstanbul",
+"coordinates": "36.0,42.0",
+"altitude": 50,
+"structure_type": "Ahşap",
+"wood_material": "C24",
+"building_height": 11
+},
+"points": {"P1": [0.0, 0.0, 0.0], "P2": [12.0, 0.0, 0.0], "P3": [12.0, 8.0, 0.0], "P4": [0.0, 8.0, 0.0], "P5": [0.0, 0.0, 4.0], "P6": [12.0, 0.0, 4.0], "P7": [12.0, 8.0, 5.0], "P8": [0.0, 8.0, 5.0]},
+"polygons": {"D1": ["P1", "P2", "P6", "P5"], "D2": ["P1", "P5", "P8", "P4"], "D3": ["P2", "P3", "P7", "P6"], "D4": ["P3", "P4", "P8", "P7"], "C1": ["P5", "P6", "P7", "P8"]},
+"dead_config" : {},
+"live_config" : {},
 "wind_config" : {"v_b0": 28.0, "terrain": "Kategori III", "rho": 1.25, "ct": 1.0, "kI": 1.0},
 "snow_config" : {"slope": 15.00, "snow_region": 2, "altitude": 50, "Ce": 1.0, "Ct": 1.0},
 "earthquake_config": {

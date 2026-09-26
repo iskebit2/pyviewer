@@ -137,4 +137,4 @@ class WindEngine:
             "zmin": self.zmin,
             }
         }
-        return f'Deprem hesabı\n\n{report_}'
+        return f'Rüzgar hesabı\n\n{report_}'

@@ -601,7 +601,7 @@ class MainWindow(QMainWindow):
 
     def yuk_analiz(self):
         """Komut satırı testi — hızlı building + render."""
-        from loads.load_manager import MainWindow
+        from loads.loads_window import MainWindow
         self.loadmanager = MainWindow(self.maindata)
         self.loadmanager.show()
 

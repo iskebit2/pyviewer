@@ -283,17 +283,23 @@ def build_full_report(
 # ---------------------------------------------------------------------------
 def print_console_summary(bundle) -> None:
     """Tüm yönler için zone'ları konsola döker."""
+    print()
+    report_= bundle.get_summary()
     for result in bundle.results:
-        print(f"\n{'=' * 60}")
-        print(f"  RÜZGAR YÖNÜ: {result.w_key}  {tuple(result.w_dir)}")
-        print(f"{'=' * 60}")
 
         for surf in result.all_surfaces.values():
+            report_[surf.name] = {}
+            info_ = f"  {surf.name:8s} | {surf.surface_type.value:5s} | "
+            info_ += f"{surf.wind_relation.value:8s} | "
+            info_ += f"roof={surf.roof_type or '-':10s} | "
+            report_[surf.name]["properties"]= info_
+            
             zones = getattr(surf, "zones", []) or []
             if not zones:
                 continue
-            labels = [z.label for z in zones]
-            print(f"  {surf.name:8s} | {surf.surface_type.value:5s} | "
-                  f"{surf.wind_relation.value:8s} | "
-                  f"roof={surf.roof_type or '-':10s} | "
-                  f"zones={labels}")
+
+            report_[surf.name]["zones"] = [z.label for z in zones]
+            report_[surf.name]["cpe_report"] = create_cpe_summary_df(result)
+            report_[surf.name]["force_report"] = create_wind_force_df(result)
+
+    return f'Rüzgar hesabı\n\n{report_}'
