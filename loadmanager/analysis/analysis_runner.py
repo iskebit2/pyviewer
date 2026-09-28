@@ -6,8 +6,10 @@ Analiz Modülleri Sarmalayıcı
 
 import traceback
 from typing import Any
+from windcalc.wind_results import WindResults
 from loads.spectrum_kivy import SpectrumPlot
-
+from loads.snow_load import SnowLoad
+from loads.spectrum import EarthquakeLoad
 
 class AnalysisResult:
     """Analiz çıktısını GUI'ye taşımak için basit taşıyıcı."""
@@ -42,7 +44,7 @@ class AnalysisResult:
 
 def run_wind(config: dict, data: dict) -> AnalysisResult:
     try:
-        from windcalc.wind_results import WindResults
+        
 
         result = WindResults(
             points=config.get("points", []),
@@ -71,7 +73,7 @@ def run_wind(config: dict, data: dict) -> AnalysisResult:
 
 def run_snow(config: dict, data: dict) -> AnalysisResult:
     try:
-        from loads.snow_load import SnowLoad
+        
 
         snow = SnowLoad(data)
         report = snow.report()
@@ -96,7 +98,7 @@ def run_snow(config: dict, data: dict) -> AnalysisResult:
 
 def run_earthquake(config: dict, data: dict) -> AnalysisResult:
     try:
-        from loads.spectrum import EarthquakeLoad
+        
 
         eq = EarthquakeLoad(**data)
         report = eq.report()

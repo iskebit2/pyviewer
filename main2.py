@@ -17,7 +17,7 @@ from kivy.uix.textinput import TextInput
 from loads.snow_load import SnowLoad
 from windcalc.wind_results import WindResults
 from loads.spectrum import EarthquakeLoad
-
+from loads.spectrum_kivy import SpectrumPlot
 
 # ------------------------------------------------------------
 # ANALİZLER
@@ -562,9 +562,31 @@ class MainWindow(BoxLayout):
 
     def graph(self, *args):
 
-        self.write_log(
-            "Grafik henüz uygulanmadı."
-        )
+        if self.earthquake_analysis is None:
+            self.write_log("Önce deprem analizini hesaplayın!")
+            return
+
+        try:
+            plot = SpectrumPlot()
+            plot.set_spectrum(self.earthquake_analysis)
+            plot.show()
+
+            # Kayıt yolu bilgisi
+            save_path = None
+            if hasattr(plot, "get_default_save_path"):
+                save_path = plot.get_default_save_path()
+            elif hasattr(plot, "_get_default_save_path"):
+                save_path = plot._get_default_save_path()
+
+            msg = "📈 Spektrum grafiği oluşturuldu."
+            if save_path:
+                msg += f"\n\nPNG dosyası:\n{save_path}"
+
+            self.write_log(f"Grafik Hazır {msg}")
+
+        except Exception as e:
+            traceback.print_exc()
+            self.write_log("Grafik Hatası", str(e), "error")
 
     # --------------------------------------------------------
     # ÇIKIŞ
